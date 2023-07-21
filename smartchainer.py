@@ -13,13 +13,6 @@ import binascii
 import traceback
 from emulator.x86emulator import x86Instruction, x86Emulator
 
-# TODO: comparison gadgets / conditional move
-# TODO: Maybe xor gadgets
-# TODO: implement POP/POP/RET analyzer
-# TODO: implement script interpreter
-# TODO: scripts for common bypasses (mprotect, VirtualAlloc, VirtualProtect, WriteProcessMemory)
-
-
 PENALTY_PER_INSTRUCTION = 1
 PENALTY_PER_STACK_MOVEMENT = 1
 PENALTY_PER_RETN = 1  # small penalty so retn instructions are not equals to ret
@@ -3888,19 +3881,6 @@ def main():
     t2 = time.time()
     print('[+] Done! Load time: {0:.2f} seconds\n'.format(t2-t1))
 
-    #test_LoadConstAuxiliary()
-    #test_ZeroReg()
-    #test_MoveReg()
-    #test_LoadConst()
-    #test_AddReg()
-    #test_SubReg()
-    #test_MemStore()
-    #test_MemRead()
-    #test_NegReg()
-    #test_NotReg()
-    #test_AddStackPtrConst()
-    #test_SubStackPtrConst()
-
     color = True
     if args.no_color or sys.platform == 'win32':
         color = False
@@ -3914,155 +3894,6 @@ def main():
 
     finally:
         prompt.cleanup()
-
-
-def test_AddStackPtrConst():
-    print('AddStackPtrConst')
-
-    for key in AddStackPtrConst_chains.keys():
-        sorted_list = sorted(AddStackPtrConst_chains[key], key=lambda x: x.grade)
-
-        print('\n{0}'.format(key))
-
-        for item in sorted_list:
-            print('\t{0}'.format(item))
-
-def test_SubStackPtrConst():
-    print('SubStackPtrConst')
-
-    for key in SubStackPtrConst_chains.keys():
-        sorted_list = sorted(SubStackPtrConst_chains[key], key=lambda x: x.grade)
-
-        print('\n{0}'.format(key))
-
-        for item in sorted_list:
-            print('\t{0}'.format(item))
-
-def test_ZeroReg():
-    print('ZeroReg')
-    for key in ZeroReg_chains.keys():
-        sorted_list = sorted(ZeroReg_chains[key], key=lambda x: x.grade)
-
-        print('{0}'.format(key))
-
-        for item in sorted_list:
-            print('\t{0}'.format(item))
-
-
-def test_NegReg():
-    print('NegReg')
-    for key in NegReg_chains.keys():
-        sorted_list = sorted(NegReg_chains[key], key=lambda x: x.grade)
-
-        print('{0}'.format(key))
-
-        for item in sorted_list:
-            print('\t{0}'.format(item))
-
-
-def test_NotReg():
-    print('NotReg')
-    for key in NotReg_chains.keys():
-        sorted_list = sorted(NotReg_chains[key], key=lambda x: x.grade)
-
-        print('{0}'.format(key))
-
-        for item in sorted_list:
-            print('\t{0}'.format(item))
-
-
-def test_MoveReg():
-    print('MoveReg')
-    for src in MoveReg_chains.keys():
-        print('From {0}'.format(src))
-        for dst in MoveReg_chains[src].keys():
-            print('   To {0}'.format(dst))
-
-            sorted_list = sorted(MoveReg_chains[src][dst], key=lambda x: x.grade)
-            for item in sorted_list:
-                if item.grade < PENALTY_PER_STACK_MOVEMENT_NEGATIVE:
-                    print('      {0}'.format(item))
-
-
-def test_LoadConst():
-    print('LoadConst')
-    for key in LoadConst_chains.keys():
-        sorted_list = sorted(LoadConst_chains[key], key=lambda x: x.grade)
-
-        print('{0}'.format(key))
-
-        for item in sorted_list:
-            print('\t{0}'.format(item))
-
-
-def test_AddReg():
-    print('AddReg')
-    for src in AddReg_chains.keys():
-        print('Store in {0}'.format(src))
-        for dst in AddReg_chains[src].keys():
-            print('   Add from {0}'.format(dst))
-
-            sorted_list = sorted(AddReg_chains[src][dst], key=lambda x: x.grade)
-            for item in sorted_list:
-                print('      {0}'.format(item))
-
-
-def test_SubReg():
-    print('SubReg')
-    for src in SubReg_chains.keys():
-        print('Store in {0}'.format(src))
-        for dst in SubReg_chains[src].keys():
-            print('   Sub from {0}'.format(dst))
-
-            sorted_list = sorted(SubReg_chains[src][dst], key=lambda x: x.grade)
-            for item in sorted_list:
-                print('      {0}'.format(item))
-
-
-def test_MemStore():
-    print('MemStore')
-    for src in MemStore_chains.keys():
-        print('Mem addr in {0}'.format(src))
-        for dst in MemStore_chains[src].keys():
-            print('   Value in {0}'.format(dst))
-
-            sorted_list = sorted(MemStore_chains[src][dst], key=lambda x: x.grade)
-            for item in sorted_list:
-                if item.grade < PENALTY_PER_STACK_MOVEMENT_NEGATIVE:
-                    print('      {0}'.format(item))
-
-def test_MemRead():
-    print('test_MemRead')
-    for src in MemRead_chains.keys():
-        print('Mem addr in {0}'.format(src))
-        for dst in MemRead_chains[src].keys():
-            print('   Value in {0}'.format(dst))
-
-            sorted_list = sorted(MemRead_chains[src][dst], key=lambda x: x.grade)
-            for item in sorted_list:
-                if item.grade < PENALTY_PER_STACK_MOVEMENT_NEGATIVE or True:
-                    print('      {0}'.format(item))
-
-
-def test_LoadConstAuxiliary():
-    print('LoadConstAuxiliary')
-    for reg in LoadConstAuxiliary_chains.keys():
-        print('dst={0}'.format(reg))
-        for auxiliary_type in LoadConstAuxiliary_chains[reg].keys():
-            print('    type={0}'.format(auxiliary_type))
-            sorted_list = sorted(LoadConstAuxiliary_chains[reg][auxiliary_type], key=lambda x: x.grade)
-
-            for item in sorted_list:
-                print('        {0}'.format(item))
-
-def test_execute_gadgets(gadgets):
-    for gadget in gadgets:
-        try:
-            emu = x86Emulator(bits=GADGETS_ARCH_BITS)
-            emu = execute_gadget(emu, gadget['instructions'])
-
-        except Exception as e:
-            notify_exception(e)
 
 
 if __name__ == '__main__':
