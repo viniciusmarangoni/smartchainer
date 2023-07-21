@@ -1932,13 +1932,20 @@ class Graph:
 
 
 class RopShell(cmd.Cmd):
-    def __init__(self):
+    def __init__(self, color=True):
         setattr(RopShell, 'do_append-chain', RopShell.appendchain)
         setattr(RopShell, 'help_append-chain', RopShell.appendchain_help)
 
+        self.__color_enabled = color
+
         self.identchars += '-'
         cmd.Cmd.__init__(self)
-        self.prompt = '\033[1;31m' + 'smartchainer> ' + '\033[0m'
+
+        if self.__color_enabled:
+            self.prompt = '\033[1;31m' + 'smartchainer> ' + '\033[0m'
+
+        else:
+            self.prompt = 'smartchainer> '
 
         self.list_in_context = None
         self.list_name_in_context = None
@@ -1979,13 +1986,23 @@ class RopShell(cmd.Cmd):
             self.DUMMY_VALUE_FOR_ROP = struct.unpack('<I', chosen_one.to_bytes(1, 'big') * 4)[0]
 
     def color_good(self, msg):
-        return '\033[0;34m{0}\033[0m'.format(msg)
+        if self.__color_enabled:
+            return '\033[0;34m{0}\033[0m'.format(msg)
+
+        return msg
 
     def color_medium(self, msg):
-        return '\033[33m{0}\033[0m'.format(msg)
+        if self.__color_enabled:
+            return '\033[33m{0}\033[0m'.format(msg)
+
+        return msg
+
 
     def color_bad(self, msg):
-        return '\033[31m{0}\033[0m'.format(msg)
+        if self.__color_enabled:
+            return '\033[31m{0}\033[0m'.format(msg)
+
+        return msg
 
     def color_grade(self, grade):
         if grade < PENALTY_PER_MEMORY_DIFF:
@@ -2373,7 +2390,11 @@ class RopShell(cmd.Cmd):
 
             # Start highlight
             if index == highlight_item:
-                sys.stdout.write('\033[0;34m')
+                if self.__color_enabled:
+                    sys.stdout.write('\033[0;34m')
+
+                else:
+                    sys.stdout.write('\n++++++++++')
 
             print('\n# {0} chain'.format(details['origin']))
             for gadget in chain.gadgets:
@@ -2396,7 +2417,11 @@ class RopShell(cmd.Cmd):
 
             # End highlight
             if index == highlight_item:
-                sys.stdout.write('\033[0m')
+                if self.__color_enabled:
+                    sys.stdout.write('\033[0m')
+
+                else:
+                    sys.stdout.write('++++++++++\n')
 
         sys.stdout.write('\n\n')
 
@@ -3788,7 +3813,9 @@ def parse_badchars(badchars_str):
 
 
 def bytes_to_hex_escaped(data_bytes):
-    hex_str = binascii.hexlify(data_bytes, sep=' ')
+    hex_str = binascii.hexlify(data_bytes)
+    hex_str = b' '.join(hex_str[i:i+2] for i in range(0, len(hex_str), 2))
+
     return ''.join(list(map(lambda x: '\\x{0}'.format(x), hex_str.decode().split(' '))))
 
 
@@ -3804,6 +3831,8 @@ def main():
                                                "for negative offsets", type=str, default='0x0')
 
     parser.add_argument('--arch', help='Specify the processor architecture of gadgets', choices=['x86', 'x64'], default='x86')
+
+    parser.add_argument('--no-color', help='Disable colored output', action='store_true')
 
     parser.add_argument('gadgets_file', help='Text file with gadgets')
 
@@ -3872,7 +3901,11 @@ def main():
     #test_AddStackPtrConst()
     #test_SubStackPtrConst()
 
-    prompt = RopShell()
+    color = True
+    if args.no_color:
+        color = False
+
+    prompt = RopShell(color=color)
 
     try:
         prompt.cmdloop()
