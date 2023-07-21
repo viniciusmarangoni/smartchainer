@@ -3902,7 +3902,7 @@ def main():
     #test_SubStackPtrConst()
 
     color = True
-    if args.no_color:
+    if args.no_color or sys.platform == 'win32':
         color = False
 
     prompt = RopShell(color=color)
