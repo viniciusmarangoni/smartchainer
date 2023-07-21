@@ -1973,10 +1973,10 @@ class RopShell(cmd.Cmd):
             raise Exception('Unable to find an available dummy value')
 
         if GADGETS_ARCH_BITS == 64:
-            self.DUMMY_VALUE_FOR_ROP = struct.unpack('<Q', chosen_one.to_bytes() * 8)[0]
+            self.DUMMY_VALUE_FOR_ROP = struct.unpack('<Q', chosen_one.to_bytes(1, 'big') * 8)[0]
 
         else:
-            self.DUMMY_VALUE_FOR_ROP = struct.unpack('<I', chosen_one.to_bytes() * 4)[0]
+            self.DUMMY_VALUE_FOR_ROP = struct.unpack('<I', chosen_one.to_bytes(1, 'big') * 4)[0]
 
     def color_good(self, msg):
         return '\033[0;34m{0}\033[0m'.format(msg)
@@ -3330,7 +3330,7 @@ class RopShell(cmd.Cmd):
         available_bytes = bytearray()
         for i in range(0, 0xff+1):
             if i not in BAD_CHARS:
-                available_bytes += bytearray(i.to_bytes())
+                available_bytes += bytearray(i.to_bytes(1, 'big'))
 
         if len(available_bytes) == 0:
             raise Exception('All bytes are bad chars')
@@ -3341,7 +3341,7 @@ class RopShell(cmd.Cmd):
 
         constant = bytearray()
         for i in range(num_bytes):
-            constant += bytearray(random.choice(available_bytes).to_bytes())
+            constant += bytearray(random.choice(available_bytes).to_bytes(1, 'big'))
 
         constant = bytes(constant)
 
