@@ -266,7 +266,7 @@ class x86Emulator:
                     return None
 
             offset = addr_to_read & 0x0000000000000fff
-            data += self.memory[page][offset].to_bytes()
+            data += self.memory[page][offset].to_bytes(1, 'big')
 
         return data
 
