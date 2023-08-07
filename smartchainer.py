@@ -16,6 +16,7 @@ from emulator.x86emulator import x86Instruction, x86Emulator
 PENALTY_PER_INSTRUCTION = 1
 PENALTY_PER_STACK_MOVEMENT = 1
 PENALTY_PER_RETN = 1  # small penalty so retn instructions are not equals to ret
+PENALTY_PER_IMPRECISE_INSTR = 1  # add this penalty in instructions like adc and sbb
 PENALTY_FOR_INSTRUCTION_WITH_OFFSET = 50
 PENALTY_FOR_TAINTED_REG = 50
 PENALTY_PER_MEMORY_DIFF = 150
@@ -471,6 +472,8 @@ def analyze_for_SubStackPtrConst(gadget):
     first_instr = x86Instruction(instructions[0])
 
     def SubStackPtrConst_finish_analysis():
+        nonlocal first_instr
+
         emu = x86Emulator(bits=GADGETS_ARCH_BITS)
         emu.map_new_stack_on_map_error(True)
 
@@ -484,7 +487,11 @@ def analyze_for_SubStackPtrConst(gadget):
         else:
             stack_ptr = 'esp'
 
-        state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[stack_ptr], stack_pivoted=True)
+        additional_penalty = 0
+        if first_instr.mnemonic == 'sbb':
+            additional_penalty = PENALTY_PER_IMPRECISE_INSTR
+
+        state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[stack_ptr], stack_pivoted=True, additional_penalty=additional_penalty)
         state_transition_info['intentional-stack-movement-before-ret'] = True
         constant = state_transition_info['stack-movement-before-ret']
 
@@ -499,7 +506,7 @@ def analyze_for_SubStackPtrConst(gadget):
         if constant > 0:
             add_to_SubStackPtrConst(hex(constant), Chain([Gadget(address, instructions, state_transition_info)]))
 
-    if first_instr.mnemonic == 'sub' and first_instr.first_operand in ['esp', 'rsp']:
+    if first_instr.mnemonic in ['sub', 'sbb'] and first_instr.first_operand in ['esp', 'rsp']:
         if first_instr.second_operand.startswith('0x') or first_instr.second_operand.isdigit():
             last_instr = x86Instruction(instructions[-1])
             if last_instr.mnemonic in ['ret', 'retn']:
@@ -512,6 +519,8 @@ def analyze_for_AddStackPtrConst(gadget):
     first_instr = x86Instruction(instructions[0])
 
     def AddStackPtrConst_finish_analysis():
+        nonlocal first_instr
+
         emu = x86Emulator(bits=GADGETS_ARCH_BITS)
         emu.map_new_stack_on_map_error(True)
 
@@ -525,7 +534,11 @@ def analyze_for_AddStackPtrConst(gadget):
         else:
             stack_ptr = 'esp'
 
-        state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[stack_ptr], stack_pivoted=True)
+        additional_penalty = 0
+        if first_instr.mnemonic == 'adc':
+            additional_penalty = PENALTY_PER_IMPRECISE_INSTR
+
+        state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[stack_ptr], stack_pivoted=True, additional_penalty=additional_penalty)
         state_transition_info['intentional-stack-movement-before-ret'] = True
         constant = state_transition_info['stack-movement-before-ret']
 
@@ -540,7 +553,7 @@ def analyze_for_AddStackPtrConst(gadget):
         if constant > 0:
             add_to_AddStackPtrConst(hex(constant), Chain([Gadget(address, instructions, state_transition_info)]))
 
-    if first_instr.mnemonic == 'add' and first_instr.first_operand in ['esp', 'rsp']:
+    if first_instr.mnemonic in ['add', 'adc'] and first_instr.first_operand in ['esp', 'rsp']:
         if first_instr.second_operand.startswith('0x') or first_instr.second_operand.isdigit():
             last_instr = x86Instruction(instructions[-1])
             if last_instr.mnemonic in ['ret', 'retn']:
@@ -844,14 +857,20 @@ def analyze_for_AddReg(gadget):
 
         if satisfied_condition:
             new_state = get_emulator_state(emu)
-            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg])
+
+            additional_penalty = 0
+            if first_instr.mnemonic == 'adc':
+                additional_penalty = PENALTY_PER_IMPRECISE_INSTR
+
+            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg], additional_penalty=additional_penalty)
+
             grade = state_transition_info['grade']
             tainted_regs = state_transition_info['tainted-registers']
 
             add_to_AddReg(result_reg, hex(adder_reg), Chain([Gadget(address, instructions, state_transition_info)]))
 
     def AddReg_finish_analysis(potential_stack_pivot=False):
-        nonlocal stack_pivoted
+        nonlocal stack_pivoted, first_instr
 
         emu = x86Emulator(bits=GADGETS_ARCH_BITS)
 
@@ -898,14 +917,19 @@ def analyze_for_AddReg(gadget):
 
         if satisfied_condition:
             new_state = get_emulator_state(emu)
-            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg], stack_pivoted=stack_pivoted)
+
+            additional_penalty = 0
+            if first_instr.mnemonic == 'adc':
+                additional_penalty = PENALTY_PER_IMPRECISE_INSTR
+
+            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg], stack_pivoted=stack_pivoted, additional_penalty=additional_penalty)
             grade = state_transition_info['grade']
             tainted_regs = state_transition_info['tainted-registers']
 
             add_to_AddReg(result_reg, adder_reg, Chain([Gadget(address, instructions, state_transition_info)]))
 
 
-    if first_instr.mnemonic == 'add' and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
+    if first_instr.mnemonic in ['add', 'adc'] and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
         result_reg = first_instr.first_operand
         adder_reg = first_instr.second_operand
 
@@ -915,7 +939,7 @@ def analyze_for_AddReg(gadget):
         else:
             AddReg_finish_analysis()
 
-    elif first_instr.mnemonic == 'add' and first_instr.first_operand in ALL_KNOWN_REGISTERS:
+    elif first_instr.mnemonic in ['add', 'adc'] and first_instr.first_operand in ALL_KNOWN_REGISTERS:
         if first_instr.first_operand not in ['esp', 'rsp']:
             if first_instr.second_operand.startswith('0x') or first_instr.second_operand.isdigit():
                 result_reg = first_instr.first_operand
@@ -1010,14 +1034,19 @@ def analyze_for_SubReg(gadget):
 
         if satisfied_condition:
             new_state = get_emulator_state(emu)
-            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg], stack_pivoted=stack_pivoted)
+
+            additional_penalty = 0
+            if first_instr.mnemonic == 'sbb':
+                additional_penalty = PENALTY_PER_IMPRECISE_INSTR
+
+            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg], stack_pivoted=stack_pivoted, additional_penalty=additional_penalty)
             grade = state_transition_info['grade']
             tainted_regs = state_transition_info['tainted-registers']
 
             add_to_SubReg(result_reg, hex(subber_reg), Chain([Gadget(address, instructions, state_transition_info)]))
 
     def SubReg_finish_analysis(potential_stack_pivot=False):
-        nonlocal stack_pivoted
+        nonlocal stack_pivoted, first_instr
 
         emu = x86Emulator(bits=GADGETS_ARCH_BITS)
 
@@ -1064,25 +1093,29 @@ def analyze_for_SubReg(gadget):
 
         if satisfied_condition:
             new_state = get_emulator_state(emu)
-            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg], stack_pivoted=stack_pivoted)
+
+            additional_penalty = 0
+            if first_instr.mnemonic == 'sbb':
+                additional_penalty = PENALTY_PER_IMPRECISE_INSTR
+
+            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[result_reg], stack_pivoted=stack_pivoted, additional_penalty=additional_penalty)
             grade = state_transition_info['grade']
             tainted_regs = state_transition_info['tainted-registers']
 
             add_to_SubReg(result_reg, subber_reg, Chain([Gadget(address, instructions, state_transition_info)]))
 
 
-    if first_instr.mnemonic == 'sub' and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
+    if first_instr.mnemonic in ['sub', 'sbb'] and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
         result_reg = first_instr.first_operand
         subber_reg = first_instr.second_operand
         
         if result_reg in ['esp', 'rsp']:
-            print(instructions)
             SubReg_finish_analysis(potential_stack_pivot=True)
 
         else:
             SubReg_finish_analysis()
 
-    elif first_instr.mnemonic == 'sub' and first_instr.first_operand in ALL_KNOWN_REGISTERS:
+    elif first_instr.mnemonic in ['sub', 'sbb'] and first_instr.first_operand in ALL_KNOWN_REGISTERS:
         if first_instr.first_operand not in ['esp', 'rsp']:
             if first_instr.second_operand.startswith('0x') or first_instr.second_operand.isdigit():
                 result_reg = first_instr.first_operand
@@ -1785,6 +1818,131 @@ def populate_GetStackPtr():
         GetStackPtr_chains[reg] = sorted(GetStackPtr_chains[reg], key=lambda x: x.grade)
 
 
+def discover_more_memread(gadgets):
+    print('[+] Discovering more ReadMem chains...')
+
+    for gadget in gadgets:
+        try:
+            instructions = gadget['instructions']
+            address = gadget['address']
+            first_instr = x86Instruction(instructions[0])
+            zero_reg_chain = None
+            neg_reg_chain = None
+
+            def MoreMemRead_finish_analysis(p_mem_addr_reg, p_value_reg, p_is_subtraction, p_mem_addr_offset=0):
+                nonlocal instructions, first_instr
+
+                emu = x86Emulator(bits=GADGETS_ARCH_BITS)
+                stack_ptr = emu.get_stack_pointer_value()
+                write_address = stack_ptr - 0x300
+
+                if emu.BITS == 64:
+                    write_value = 0x3a4a5a6a7a8a9aba
+                    negated_write_value = 0xc5b5a59585756546
+                    write_size = 8
+                    data = struct.pack('<Q', write_value)
+
+                else:
+                    write_value = 0x3a4a5a6a
+                    negated_write_value = 0xc5b5a596
+                    write_size = 4
+                    data = struct.pack('<I', write_value)
+
+                emu.write_mem(write_address, data)
+                emu.set_register_value(p_mem_addr_reg, write_address - p_mem_addr_offset)
+
+                # We expect it zeroed because of the ZeroReg chain
+                emu.set_register_value(p_value_reg, 0)
+
+                initial_state = get_emulator_state(emu)
+                emu = execute_gadget(emu, instructions)
+
+                data = emu.get_register_value(p_value_reg)
+
+                satisfied_condition = False
+                if p_is_subtraction:
+                    if data == negated_write_value:
+                        satisfied_condition = True
+
+                else:
+                    if data == write_value:
+                        satisfied_condition = True
+
+                if satisfied_condition:
+                    new_state = get_emulator_state(emu)
+
+                    penalty_imprecise_instr = 0
+                    if first_instr.mnemonic in ['adc', 'sbb']:
+                        penalty_imprecise_instr = PENALTY_PER_IMPRECISE_INSTR
+
+                    state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[p_value_reg], additional_penalty=(abs(p_mem_addr_offset) * PENALTY_FOR_INSTRUCTION_WITH_OFFSET) + penalty_imprecise_instr)
+
+                    grade = state_transition_info['grade']
+                    tainted_regs = state_transition_info['tainted-registers']
+
+                    effective_readmem_chain = Chain([Gadget(address, instructions, state_transition_info)])
+
+                    if p_is_subtraction:
+                        final_chain = join_chains([zero_reg_chain, effective_readmem_chain, neg_reg_chain])
+
+                    else:
+                        final_chain = join_chains([zero_reg_chain, effective_readmem_chain])
+
+                    add_to_MemRead(mem_addr_reg, p_value_reg, final_chain)
+
+
+            if first_instr.mnemonic in ['xor', 'or', 'add', 'adc', 'sub', 'sbb'] and first_instr.first_operand in ALL_KNOWN_REGISTERS:
+                is_subtraction = False
+                if first_instr.mnemonic in ['sub', 'sbb']:
+                    is_subtraction = True
+
+                if '[' not in first_instr.second_operand:
+                    continue
+
+                zero_reg_chain = ZeroReg_chains.get(first_instr.first_operand, None)
+                if zero_reg_chain == None or len(zero_reg_chain) == 0:
+                    zero_reg_chain = None
+                    continue
+
+                zero_reg_chain = zero_reg_chain[0]
+
+                if is_subtraction:
+                    neg_reg_chain = NegReg_chains.get(first_instr.first_operand, None)
+                    if neg_reg_chain == None or len(neg_reg_chain) == 0:
+                        neg_reg_chain = None
+                        continue
+
+                    neg_reg_chain = neg_reg_chain[0]
+
+                i = first_instr.second_operand.find('[')
+                j = first_instr.second_operand.find(']')
+
+                if i == -1 or j == -1:
+                    continue
+
+                text = first_instr.second_operand[i+1:j]
+                if text in ALL_KNOWN_REGISTERS:
+                    mem_addr_reg = text
+                    value_reg = first_instr.first_operand
+
+                    MoreMemRead_finish_analysis(mem_addr_reg, value_reg, is_subtraction)
+
+                else:
+                    register, offset = get_register_and_offset_from_memory_operation(first_instr.second_operand)
+
+                    if register != None and offset != None and register in ALL_KNOWN_REGISTERS:
+                        value_reg = first_instr.first_operand
+                        mem_addr_reg = register
+                        mem_addr_offset = offset
+
+                        MoreMemRead_finish_analysis(mem_addr_reg, value_reg, is_subtraction, mem_addr_offset)
+
+        except Exception as e:
+            pass
+
+    sort_semantic_gadgets(quiet=True)
+
+
 def initialize_semantic_gadgets(gadgets):
     analyzers = []
     analyzers.append(analyze_for_ZeroReg)
@@ -1793,7 +1951,7 @@ def initialize_semantic_gadgets(gadgets):
     analyzers.append(analyze_for_AddReg)
     analyzers.append(analyze_for_SubReg)
     analyzers.append(analyze_for_MemStore)
-    analyzers.append(analyze_for_MemRead)
+    #analyzers.append(analyze_for_MemRead)
     analyzers.append(analyze_for_NegReg)
     analyzers.append(analyze_for_NotReg)
     analyzers.append(analyze_for_AddStackPtrConst)
@@ -1821,6 +1979,7 @@ def initialize_semantic_gadgets(gadgets):
     sort_semantic_gadgets()
 
     discover_more_moves()
+    discover_more_memread(gadgets)
 
     # call this only after sorting semantic gadgets
     populate_LoadConstAuxiliary()
