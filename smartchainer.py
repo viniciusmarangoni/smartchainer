@@ -16,7 +16,7 @@ from emulator.x86emulator import x86Instruction, x86Emulator
 PENALTY_PER_INSTRUCTION = 1
 PENALTY_PER_STACK_MOVEMENT = 1
 PENALTY_PER_RETN = 1  # small penalty so retn instructions are not equals to ret
-PENALTY_PER_IMPRECISE_INSTR = 1  # add this penalty in instructions like adc and sbb
+PENALTY_PER_IMPRECISE_INSTR = 1  # add this penalty in instructions like adc and sbb, that may consider the carry flag
 PENALTY_FOR_INSTRUCTION_WITH_OFFSET = 50
 PENALTY_FOR_TAINTED_REG = 50
 PENALTY_PER_MEMORY_DIFF = 150
@@ -1951,7 +1951,7 @@ def initialize_semantic_gadgets(gadgets):
     analyzers.append(analyze_for_AddReg)
     analyzers.append(analyze_for_SubReg)
     analyzers.append(analyze_for_MemStore)
-    #analyzers.append(analyze_for_MemRead)
+    analyzers.append(analyze_for_MemRead)
     analyzers.append(analyze_for_NegReg)
     analyzers.append(analyze_for_NotReg)
     analyzers.append(analyze_for_AddStackPtrConst)
