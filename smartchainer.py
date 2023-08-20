@@ -16,7 +16,8 @@ from emulator.x86emulator import x86Instruction, x86Emulator
 PENALTY_PER_INSTRUCTION = 1
 PENALTY_PER_STACK_MOVEMENT = 1
 PENALTY_PER_RETN = 1  # small penalty so retn instructions are not equals to ret
-PENALTY_PER_IMPRECISE_INSTR = 1  # add this penalty in instructions like adc and sbb, that may consider the carry flag
+PENALTY_PER_COMPLICATED_CHAIN = 2
+PENALTY_PER_IMPRECISE_INSTR = 3  # add this penalty in instructions like adc and sbb, that may consider the carry flag
 PENALTY_FOR_INSTRUCTION_WITH_OFFSET = 50
 PENALTY_FOR_TAINTED_REG = 50
 PENALTY_PER_MEMORY_DIFF = 150
@@ -52,6 +53,11 @@ SubReg_chains = {}
 
 # MemStore_chains = {'mem-addr-register': {'value-register': [Chain, Chain, Chain]}}
 MemStore_chains = {}
+
+# MemStoreAuxiliary_chains = {'auxiliary-type': {}]
+# MemStoreAuxiliary_chains = {'store-const': {'mem-addr-register': {'constant-value': [Chain, Chain, Chain...]}}]
+# MemStoreAuxiliary_chains = {'add-reg': {'mem-addr-register': {'register-adder': [Chain, Chain, Chain...]}}]
+MemStoreAuxiliary_chains = {}
 
 # MemRead_chains = {'mem-addr-register': {'value-register': [Chain, Chain, Chain]}}
 MemRead_chains = {}
@@ -1152,6 +1158,26 @@ def add_to_MemStore(mem_addr_reg: str, value_reg: str, chain: Chain):
     MemStore_chains[mem_addr_reg][value_reg].append(chain)
 
 
+
+def add_to_MemStoreAuxiliary(auxiliary_type: str, param1: str, param2: str, chain: Chain):
+    global MemStoreAuxiliary_chains
+
+    # MemStoreAuxiliary_chains = {'auxiliary-type': {}]
+    # MemStoreAuxiliary_chains = {'store-const': {'mem-addr-register': {'constant-value': [Chain, Chain, Chain...]}}]
+    # MemStoreAuxiliary_chains = {'add-reg': {'mem-addr-register': {'register-adder': [Chain, Chain, Chain...]}}]
+
+    if MemStoreAuxiliary_chains.get(auxiliary_type, None) == None:
+        MemStoreAuxiliary_chains[auxiliary_type] = {}
+
+    if MemStoreAuxiliary_chains[auxiliary_type].get(param1, None) == None:
+        MemStoreAuxiliary_chains[auxiliary_type][param1] = {}
+
+    if MemStoreAuxiliary_chains[auxiliary_type][param1].get(param2, None) == None:
+        MemStoreAuxiliary_chains[auxiliary_type][param1][param2] = []
+
+    MemStoreAuxiliary_chains[auxiliary_type][param1][param2].append(chain)
+
+
 def get_register_and_offset_from_memory_operation(operation):
     i = operation.find('[')
     j = operation.find(']')
@@ -1818,6 +1844,47 @@ def populate_GetStackPtr():
         GetStackPtr_chains[reg] = sorted(GetStackPtr_chains[reg], key=lambda x: x.grade)
 
 
+def discover_more_memstore(gadgets):
+    global MemStoreAuxiliary_chains, MemStore_chains
+    chains = []
+
+    print('[+] Discovering more StoreMem chains...')
+
+    for mem_addr_reg in MemStoreAuxiliary_chains.get('store-const', {}).keys():
+        for constant_value in MemStoreAuxiliary_chains.get('store-const', {}).get(mem_addr_reg, {}).keys():
+            initializer_chains = MemStoreAuxiliary_chains.get('store-const', {}).get(mem_addr_reg, {}).get(constant_value, [])
+
+            for operation in ['add-reg', 'sub-reg']:
+                for reg_modifier in MemStoreAuxiliary_chains.get(operation, {}).get(mem_addr_reg, {}).keys():
+                    adder_chains = MemStoreAuxiliary_chains.get(operation, {}).get(mem_addr_reg, {}).get(reg_modifier, [])
+
+                    count_add = 0
+                    count_sub = 0
+                    for chain1 in initializer_chains:
+                        for chain2 in adder_chains:
+                            concat_chain = join_chains([chain1, chain2])
+
+                            if operation == 'sub-reg':
+                                concat_chain.grade += PENALTY_PER_COMPLICATED_CHAIN
+
+                            if int(constant_value, 16) != 0:
+                                concat_chain.grade += PENALTY_PER_COMPLICATED_CHAIN
+
+                                if operation == 'add-reg':
+                                    if count_add < 3:
+                                        add_to_MemStore(mem_addr_reg, reg_modifier, concat_chain)
+                                        count_add += 1
+
+                                elif operation == 'sub-reg':
+                                    if count_sub < 3:
+                                        add_to_MemStore(mem_addr_reg, reg_modifier, concat_chain)
+                                        count_sub += 1
+
+                            else:
+                                add_to_MemStore(mem_addr_reg, reg_modifier, concat_chain)
+
+    sort_semantic_gadgets(quiet=True)
+
 def discover_more_memread(gadgets):
     print('[+] Discovering more ReadMem chains...')
 
@@ -1943,6 +2010,128 @@ def discover_more_memread(gadgets):
     sort_semantic_gadgets(quiet=True)
 
 
+def analyze_for_MemStoreAuxiliary(gadget):
+    instructions = gadget['instructions']
+    address = gadget['address']
+    first_instr = x86Instruction(instructions[0])
+    mem_addr_reg = None
+    mem_addr_offset = 0
+    value_const = None
+    value_reg = None
+    auxiliary_type = None
+
+    def MemStoreAuxiliary_finish_analysis():
+        emu = x86Emulator(bits=GADGETS_ARCH_BITS)
+        stack_ptr = emu.get_stack_pointer_value()
+        write_address = stack_ptr - 0x300
+        emu.set_register_value(mem_addr_reg, write_address - mem_addr_offset)
+
+        if auxiliary_type == 'store-const':
+            write_value = value_const
+
+
+        if emu.BITS == 64:
+            if auxiliary_type in ['add-reg', 'sub-reg']:
+                write_value = 0x3a4a5a6a7a8a9aba
+
+            write_size = 8
+
+        else:
+            if auxiliary_type in ['add-reg', 'sub-reg']:
+                write_value = 0x3a4a5a6a
+
+            write_size = 4
+
+        if auxiliary_type in ['add-reg', 'sub-reg']:
+            if emu.BITS == 64:
+                data = struct.pack('<Q', 0x0)
+
+            else:
+                data = struct.pack('<I', 0x0)
+
+            emu.write_mem(write_address, data)
+            emu.set_register_value(value_reg, write_value)
+
+        initial_state = get_emulator_state(emu)
+        emu = execute_gadget(emu, instructions)
+
+        data = emu.read_mem(write_address, write_size)
+        if write_size == 8:
+            data = struct.unpack('<Q', data)[0]
+
+        else:
+            data = struct.unpack('<I', data)[0]
+
+        write_value_integer = write_value
+        if auxiliary_type == 'store-const':
+            write_value_integer = parse_integer(write_value)
+
+        result_success = False
+        if auxiliary_type in ['store-const', 'add-reg']:
+            result_success = data == write_value_integer
+
+        elif auxiliary_type == 'sub-reg':
+            if emu.BITS == 64:
+                result_success = data == ctypes.c_uint64(0 - write_value_integer).value
+
+            else:
+                result_success = data == ctypes.c_uint32(0 - write_value_integer).value
+
+        if result_success:
+            new_state = get_emulator_state(emu)
+
+            mem_taint_exceptions = [write_address + i for i in range(write_size)]
+
+            add_penalty = 0
+            if first_instr.mnemonic in ['adc', 'sbb']:
+                add_penalty += PENALTY_PER_IMPRECISE_INSTR
+
+            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[], mem_taint_exceptions=mem_taint_exceptions, additional_penalty=(abs(mem_addr_offset) * PENALTY_FOR_INSTRUCTION_WITH_OFFSET) + add_penalty)
+            grade = state_transition_info['grade']
+            tainted_regs = state_transition_info['tainted-registers']
+
+            if auxiliary_type == 'store-const':
+                add_to_MemStoreAuxiliary(auxiliary_type, mem_addr_reg, hex_converter(parse_integer(value_const)), Chain([Gadget(address, instructions, state_transition_info)]))
+
+            elif auxiliary_type == 'add-reg':
+                add_to_MemStoreAuxiliary(auxiliary_type, mem_addr_reg, value_reg, Chain([Gadget(address, instructions, state_transition_info)]))
+
+            elif auxiliary_type == 'sub-reg':
+                add_to_MemStoreAuxiliary(auxiliary_type, mem_addr_reg, value_reg, Chain([Gadget(address, instructions, state_transition_info)]))
+
+
+    if first_instr.mnemonic == 'mov' and '[' in first_instr.first_operand and first_instr.second_operand.startswith('0x'):
+        auxiliary_type = 'store-const'
+        i = first_instr.first_operand.find('[')
+        j = first_instr.first_operand.find(']')
+
+        if i != -1 and j != -1:
+            text = first_instr.first_operand[i+1:j]
+
+            if text in ALL_KNOWN_REGISTERS:
+                mem_addr_reg = text
+                value_const = first_instr.second_operand
+
+                MemStoreAuxiliary_finish_analysis()
+
+    elif first_instr.mnemonic in ['add', 'adc', 'sub', 'sbb'] and '[' in first_instr.first_operand and first_instr.second_operand in ALL_KNOWN_REGISTERS:
+        auxiliary_type = 'add-reg'
+        if first_instr.mnemonic in ['sub', 'sbb']:
+            auxiliary_type = 'sub-reg'
+
+        i = first_instr.first_operand.find('[')
+        j = first_instr.first_operand.find(']')
+
+        if i != -1 and j != -1:
+            text = first_instr.first_operand[i+1:j]
+
+            if text in ALL_KNOWN_REGISTERS and text != first_instr.second_operand:
+                mem_addr_reg = text
+                value_reg = first_instr.second_operand
+
+                MemStoreAuxiliary_finish_analysis()
+
+
 def initialize_semantic_gadgets(gadgets):
     analyzers = []
     analyzers.append(analyze_for_ZeroReg)
@@ -1951,6 +2140,7 @@ def initialize_semantic_gadgets(gadgets):
     analyzers.append(analyze_for_AddReg)
     analyzers.append(analyze_for_SubReg)
     analyzers.append(analyze_for_MemStore)
+    analyzers.append(analyze_for_MemStoreAuxiliary)
     analyzers.append(analyze_for_MemRead)
     analyzers.append(analyze_for_NegReg)
     analyzers.append(analyze_for_NotReg)
@@ -1980,6 +2170,7 @@ def initialize_semantic_gadgets(gadgets):
 
     discover_more_moves()
     discover_more_memread(gadgets)
+    discover_more_memstore(gadgets)
 
     # call this only after sorting semantic gadgets
     populate_LoadConstAuxiliary()
@@ -3938,6 +4129,13 @@ class RopShell(cmd.Cmd):
 
     def cleanup(self):
         print('Cleaning up')
+
+
+def hex_converter(value):
+    if GADGETS_ARCH_BITS == 64:
+        return '{0:#018x}'.format(value)
+
+    return '{0:#010x}'.format(value)
 
 
 def parse_integer(value_str):
