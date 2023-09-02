@@ -18,6 +18,7 @@ PENALTY_PER_STACK_MOVEMENT = 1
 PENALTY_PER_RETN = 1  # small penalty so retn instructions are not equals to ret
 PENALTY_PER_COMPLICATED_CHAIN = 2
 PENALTY_PER_IMPRECISE_INSTR = 3  # add this penalty in instructions like adc and sbb, that may consider the carry flag
+PENALTY_FOR_TAINTED_BASE_PTR = 5
 PENALTY_FOR_INSTRUCTION_WITH_OFFSET = 50
 PENALTY_FOR_TAINTED_REG = 50
 PENALTY_PER_MEMORY_DIFF = 150
@@ -79,6 +80,9 @@ SubStackPtrConst_chains = {}
 
 # StackPivot_chains = {'<src-reg | constant>': [Chain, Chain, Chain...]}
 StackPivot_chains = {}
+
+# PopPopRet_chains = {'reg1': {'reg2': [Chain, Chain, Chain]}}
+PopPopRet_chains = {}
 
 tmp_emu = x86Emulator()
 KNOWN_REGISTERS_32 = tmp_emu.KNOWN_REGISTERS
@@ -348,6 +352,9 @@ def get_state_transition_info(instructions, initial_state, new_state, taint_exce
                 reg_taint_count += 1
                 tainted_regs.append(reg)
 
+                if reg in ['rbp', 'ebp']:
+                    grade += PENALTY_FOR_TAINTED_BASE_PTR
+
         if stack_pivoted and reg in ['rsp', 'esp']:
             if reg not in taint_exceptions:
                 reg_taint_count += 1
@@ -413,6 +420,19 @@ def get_state_transition_info(instructions, initial_state, new_state, taint_exce
     info['tainted-registers'] = tainted_regs
 
     return info
+
+
+def add_to_PopPopRet(reg1: str, reg2: str, chain: Chain):
+    global PopPopRet_chains
+
+    # PopPopRet_chains = {'reg1': {'reg2': [Chain, Chain, Chain]}}
+    if PopPopRet_chains.get(reg1, None) == None:
+        PopPopRet_chains[reg1] = {}
+
+    if PopPopRet_chains[reg1].get(reg2, None) == None:
+        PopPopRet_chains[reg1][reg2] = []
+
+    PopPopRet_chains[reg1][reg2].append(chain)
 
 
 def add_to_LoadConstAuxiliary(reg: str, auxiliary_type:str, chain: Chain):
@@ -597,6 +617,44 @@ def analyze_for_NegReg(gadget):
     if first_instr.mnemonic == 'neg' and first_instr.first_operand in ALL_KNOWN_REGISTERS:
         NegReg_finish_analysis()
 
+
+def analyze_for_PopPopRet(gadget):
+    instructions = gadget['instructions']
+    address = gadget['address']
+    
+    if len(instructions) != 3:
+        return
+
+    instr1 = x86Instruction(instructions[0])
+    instr2 = x86Instruction(instructions[1])
+    instr3 = x86Instruction(instructions[2])
+    
+    stack_ptr = 'esp'
+    base_ptr = 'ebp'
+    if GADGETS_ARCH_BITS == 64:
+        stack_ptr = 'rsp'
+        base_ptr = 'rbp'
+    
+    def PopPopRet_finish_analysis():
+        emu = x86Emulator(bits=GADGETS_ARCH_BITS)
+        initial_state = get_emulator_state(emu)
+        emu = execute_gadget(emu, instructions)
+
+        new_state = get_emulator_state(emu)
+        state_transition_info = get_state_transition_info(instructions, initial_state, new_state)
+        state_transition_info['intentional-stack-movement-before-ret'] = True
+
+        add_to_PopPopRet(instr1.first_operand, instr2.first_operand, Chain([Gadget(address, instructions, state_transition_info)]))
+
+
+    if instr1.mnemonic == 'pop' and instr2.mnemonic == 'pop' and instr3.mnemonic == 'ret':
+        if instr1.first_operand not in ALL_KNOWN_REGISTERS or instr2.first_operand not in ALL_KNOWN_REGISTERS:
+            return
+
+        if stack_ptr in [instr1.first_operand, instr2.first_operand]:
+            return
+
+        PopPopRet_finish_analysis()
 
 def analyze_for_NotReg(gadget):
     instructions = gadget['instructions']
@@ -1466,7 +1524,7 @@ def sort_semantic_gadgets(quiet=False):
         log_info('[+] Sorting semantic gadgets by quality...')
 
     single_nested_key_lists = [ZeroReg_chains, LoadConst_chains]
-    double_nested_key_lists = [MoveReg_chains, AddReg_chains, SubReg_chains, MemStore_chains, MemRead_chains]
+    double_nested_key_lists = [MoveReg_chains, AddReg_chains, SubReg_chains, MemStore_chains, MemRead_chains, PopPopRet_chains]
 
     for item in single_nested_key_lists:
         for key in item.keys():
@@ -2145,8 +2203,10 @@ def initialize_semantic_gadgets(gadgets):
     analyzers.append(analyze_for_MemRead)
     analyzers.append(analyze_for_NegReg)
     analyzers.append(analyze_for_NotReg)
+    analyzers.append(analyze_for_PopPopRet)
     analyzers.append(analyze_for_AddStackPtrConst)
     analyzers.append(analyze_for_SubStackPtrConst)
+
 
     num_gadgets = len(gadgets)
 
@@ -3969,6 +4029,38 @@ class RopShell(cmd.Cmd):
             max_to_show = 3
 
         self.serve_chain_list(chain_list, list_name='LoadConst[{0}][{1}]'.format(dest_reg, constant_value_text), register_to_preserve=dest_reg, max_to_show=max_to_show)
+
+    def do_PopPopRet(self, in_args):
+        items = []
+        if in_args:
+            items = in_args.split(' ')
+
+        if len(items) > 1:
+            print('Invalid args\n')
+            return
+
+        chain_list = []
+        for reg1 in PopPopRet_chains.keys():
+            for reg2 in PopPopRet_chains[reg1].keys():
+                for item in PopPopRet_chains[reg1][reg2]:
+                    chain_list.append(item)
+
+        max_to_show = 3
+        if len(items) == 1:
+            if items[0].lower() == 'all':
+                max_to_show = len(chain_list)
+
+            elif items[1].isdigit():
+                max_to_show = min(len(chain_list), int(items[1]))
+
+            else:
+                print('Invalid param for <max-chains-to-show> : {0}'.format(items[1]))
+                return
+
+        sorted_list = sorted(chain_list, key=lambda x: x.grade)
+        chain_list = copy.deepcopy(sorted_list)
+
+        self.serve_chain_list(chain_list, list_name='PopPopRet', register_to_preserve=None, max_to_show=max_to_show)
 
     def do_ZeroReg(self, in_args):
         if not in_args:
