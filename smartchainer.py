@@ -2091,7 +2091,8 @@ def analyze_for_MemStoreAuxiliary(gadget):
             tainted_regs = state_transition_info['tainted-registers']
 
             if auxiliary_type == 'store-const':
-                add_to_MemStoreAuxiliary(auxiliary_type, mem_addr_reg, hex_converter(parse_integer(value_const)), Chain([Gadget(address, instructions, state_transition_info)]))
+                if mem_addr_reg not in state_transition_info.get('tainted-registers', []):
+                    add_to_MemStoreAuxiliary(auxiliary_type, mem_addr_reg, hex_converter(parse_integer(value_const)), Chain([Gadget(address, instructions, state_transition_info)]))
 
             elif auxiliary_type == 'add-reg':
                 add_to_MemStoreAuxiliary(auxiliary_type, mem_addr_reg, value_reg, Chain([Gadget(address, instructions, state_transition_info)]))
