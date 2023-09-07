@@ -8,6 +8,8 @@ import time
 import ctypes
 import random
 import struct
+import fnmatch
+import readline
 import argparse
 import binascii
 import traceback
@@ -84,6 +86,15 @@ StackPivot_chains = {}
 # PopPopRet_chains = {'reg1': {'reg2': [Chain, Chain, Chain]}}
 PopPopRet_chains = {}
 
+# BackupRestore_chains = {'reg-to-backup': {'target-reg': {'backup': [Backup_chain, Backup_chain...], 'restore': [Restore_Chain, Restore_Chain...]}}
+BackupRestore_chains = {}
+
+# AllGadgetsIndex = {'<mnemonic>': [{'address': address, 'instructions': instructions}, ...]}
+AllGadgetsIndex = {}
+
+# GadgetByAddr = {'addr': {'address': address, 'instructions': instructions}}
+GadgetsByAddr = {}
+
 tmp_emu = x86Emulator()
 KNOWN_REGISTERS_32 = tmp_emu.KNOWN_REGISTERS
 tmp_emu = x86Emulator(bits=64)
@@ -94,6 +105,8 @@ del tmp_emu
 GADGETS_ARCH_BITS = 32
 BAD_CHARS = b''
 
+FLAG_BACKUP_CHAIN = 1 << 0
+FLAG_RESTORE_CHAIN = 1 << 1
 
 class Chain:
     def __init__(self, gadgets: list):
@@ -107,6 +120,16 @@ class Chain:
 
         self.tainted_regs = list(set(self.tainted_regs))
         self.tainted_regs.sort()
+        self.flags = 0
+        self.comments = ''
+
+    def propagate_flags_overwrite(self):
+        for gadget in self.gadgets:
+            gadget.flags = self.flags
+
+    def propagate_comments_overwrite(self):
+        for gadget in self.gadgets:
+            gadget.comments = self.comments
 
     def __str__(self):
         return 'GRADE={0:08d} => {1}'.format(self.grade, [str(x) for x in self.gadgets])
@@ -126,6 +149,7 @@ class Gadget:
         self.stack_movement_after_ret = state_transition_info.get('stack-movement-after-ret', 0)
         self.comments = comments
         self.gadget_type = gadget_type
+        self.flags = 0
 
     def __str__(self):
         if self.gadget_type == 'gadget':
@@ -1943,6 +1967,49 @@ def discover_more_memstore(gadgets):
 
     sort_semantic_gadgets(quiet=True)
 
+def add_to_BackupRestore(reg_to_bkp, target_reg, target_list, chain):
+    global BackupRestore_chains
+    # BackupRestore_chains = {'reg-to-backup': {'target-reg': {'backup': [Backup_chain, Backup_chain...], 'restore': [Restore_Chain, Restore_Chain...]}}
+
+    if BackupRestore_chains.get(reg_to_bkp, None) == None:
+        BackupRestore_chains[reg_to_bkp] = {}
+
+    if BackupRestore_chains[reg_to_bkp].get(target_reg, None) == None:
+        BackupRestore_chains[reg_to_bkp][target_reg] = {'backup': [], 'restore': []}
+
+    BackupRestore_chains[reg_to_bkp][target_reg][target_list].append(chain)
+
+
+def populate_BackupRestore():
+    global BackupRestore_chains
+
+    for reg_to_bkp in ALL_KNOWN_REGISTERS:
+        for target_reg in ALL_KNOWN_REGISTERS:
+            if reg_to_bkp == target_reg:
+                continue
+
+            bkp_chains = MoveReg_chains.get(reg_to_bkp, {}).get(target_reg, [])
+            restore_chains = MoveReg_chains.get(target_reg, {}).get(reg_to_bkp, [])
+
+            if bkp_chains == [] or restore_chains == []:
+                continue
+
+            if bkp_chains[0].grade > (PENALTY_FOR_TAINTED_REG * 5) or restore_chains[0].grade > (PENALTY_FOR_TAINTED_REG * 5):
+                continue
+
+            for c in bkp_chains:
+                if c.grade > (PENALTY_FOR_TAINTED_REG * 5):
+                    break
+
+                add_to_BackupRestore(reg_to_bkp, target_reg, 'backup', c)
+
+            for c in restore_chains:
+                if c.grade > (PENALTY_FOR_TAINTED_REG * 5):
+                    break
+
+                add_to_BackupRestore(reg_to_bkp, target_reg, 'restore', c)
+
+
 def discover_more_memread(gadgets):
     print('[+] Discovering more ReadMem chains...')
 
@@ -2237,6 +2304,7 @@ def initialize_semantic_gadgets(gadgets):
     populate_LoadConstAuxiliary()
     populate_GetStackPtr()
     populate_StackPivot()
+    populate_BackupRestore()
 
 def input_swallowing_interrupt(_input):
     def _input_swallowing_interrupt(*args):
@@ -2336,7 +2404,7 @@ class Graph:
 
 
 class RopShell(cmd.Cmd):
-    def __init__(self, color=True):
+    def __init__(self, color=True, auto_bkp_restore=False):
         setattr(RopShell, 'do_append-chain', RopShell.appendchain)
         setattr(RopShell, 'help_append-chain', RopShell.appendchain_help)
 
@@ -2363,6 +2431,7 @@ class RopShell(cmd.Cmd):
         self.calculate_stats_semantic_gadgets()
 
         self.config_enable_auto_preserving_regs = False
+        self.config_enable_auto_backup_restore = auto_bkp_restore
 
     def config_dummy_value(self):
         global BAD_CHARS
@@ -2505,6 +2574,117 @@ class RopShell(cmd.Cmd):
         #return [a[3:]+' ' for a in self.get_names() if a.startswith(dotext)]
         return [a[3:]+' ' for a in self.get_names() if a.lower().startswith(dotext.lower())]  # case insensitive
 
+    def normalize_instructions(self, instructions):
+        new_instructions = []
+        for item in instructions.strip().split(';'):
+            item_stripped = item.strip()
+            if not item_stripped:
+                continue
+
+            new_item = item_stripped
+            i = item_stripped.find(' ')
+            if i != -1:
+                new_item = item.strip()[:i]
+
+                j = item_stripped.find(',')
+                if j == -1:
+                    new_item += ' ' + item_stripped[i:].strip()
+
+                else:
+                    new_item += ' ' + item_stripped[i:j].strip()
+                    new_item += ', ' + item_stripped[j+1:].strip()
+
+            new_instructions.append(new_item)
+
+        return ' ; '.join(new_instructions).lower().strip()
+
+    def emulate_gadgets_and_sort(self, gadgets_list):
+        list_to_be_sorted = []
+        for gadget in gadgets_list:
+            try:
+                instructions = gadget['instructions']
+                emu = x86Emulator(bits=GADGETS_ARCH_BITS)
+                initial_state = get_emulator_state(emu)
+                emu = execute_gadget(emu, instructions)
+                new_state = get_emulator_state(emu)
+
+                state_transition_info = get_state_transition_info(instructions, initial_state, new_state)
+                grade = state_transition_info['grade']
+
+            except Exception as e:
+                grade = PENALTY_REALLY_HIGH
+
+            list_to_be_sorted.append((grade, gadget))
+
+        sorted_list = sorted(list_to_be_sorted, key=lambda x: x[0], reverse=True)
+        return_list = list(map(lambda x: x[1], sorted_list))
+        return return_list
+
+    def do_search(self, in_args):
+        global AllGadgetsIndex
+
+        if in_args.strip() == '':
+            print('\nNo search query provided\n')
+            return
+
+        
+        try:
+            normalized_search_query = self.normalize_instructions(in_args)
+
+            if normalized_search_query == '':
+                print('\nSearch query is empty\n')
+                return
+
+        except:
+            print('\nFailed to parse search query\n')
+            return
+
+        first_search_query = normalized_search_query.split(';')[0].strip()
+        first_search_mnemonic = first_search_query
+        
+        i = first_search_mnemonic.find(' ')
+        if i != -1:
+            first_search_mnemonic = first_search_mnemonic[:i]
+
+        pre_selected_gadgets = []
+        for key in AllGadgetsIndex.keys():
+            if fnmatch.fnmatch(key.lower(), first_search_mnemonic):
+                pre_selected_gadgets += AllGadgetsIndex[key]
+
+        if len(pre_selected_gadgets) == 0:
+            print('\nNo results found\n')
+            return
+
+        normalized_search_query_splitted = list(map(lambda x: x.strip(), normalized_search_query.split(';')))
+        # AllGadgetsIndex = {'<mnemonic>': [{'address': address, 'instructions': instructions}, ...]}
+        selected_gadgets_list = []
+        for gadget in pre_selected_gadgets:
+            try:
+                instructions = self.normalize_instructions(';'.join(gadget['instructions']))
+                instructions_splitted = instructions.split(';')
+                instructions_splitted = list(map(lambda x: x.strip(), instructions_splitted))
+                if len(normalized_search_query_splitted) > len(instructions_splitted):
+                    continue
+
+                match = True
+                for i, search_item in enumerate(normalized_search_query_splitted):
+                    if not fnmatch.fnmatch(instructions_splitted[i], search_item):
+                        match = False
+                        break
+
+                if match:
+                    selected_gadgets_list.append(gadget)
+
+            except Exception as e:
+                pass
+
+        sorted_selected_gadgets_list = self.emulate_gadgets_and_sort(selected_gadgets_list)
+
+        for gadget in sorted_selected_gadgets_list:
+            normalized_instructions = self.normalize_instructions(';'.join(gadget['instructions']))
+            print('{0}: {1}'.format(gadget['address'], normalized_instructions))
+
+
     def do_show(self, in_args):
         if in_args == 'rop-chain':
             self.showropchain(in_args)
@@ -2549,6 +2729,52 @@ class RopShell(cmd.Cmd):
         # return [s[offs:] + ' ' for s in completions if s.startswith(mline)]
         return [s[offs:] + ' ' for s in completions if s.lower().startswith(mline.lower())]
 
+    def set_auto_backup_restore(self, value):
+        operation = 'enable' if value == True else 'disable'
+
+        if value == self.config_enable_auto_backup_restore:
+            print('\nThe config is already {0}d\n'.format(operation))
+            return
+
+        print('\nThe auto backup/restore feature tries to wrap chains that taints a \npreserved register '\
+                 'into a backup/restore routine, enabling the chain \nusage while the register keeps preserved.\n')
+
+        
+        self.config_enable_auto_backup_restore = value
+        print('\nDone!\n')
+
+    def help_config(self):
+        print('\n"config" command')
+        print('\tUsage:       config <configuration>')
+        print('\tExample:     config enable-auto-backup-restore')
+        print('\t             config disable-auto-backup-restore\n')
+        print('\tDescription: Use this command to set tool configuration\n')
+
+
+    def complete_config(self, text, line, begidx, endidx):
+        completions = ['enable-auto-backup-restore', 'disable-auto-backup-restore']
+
+        mline = line.partition(' ')[2]
+        offs = len(mline) - len(text)
+        return [s[offs:] + ' ' for s in completions if s.startswith(mline)]
+
+    def do_config(self, in_args):
+        items = in_args.split(' ')
+
+        if len(items) < 1:
+            print('\nUnknown command\n')
+            return
+
+        if items[0] == 'enable-auto-backup-restore':
+            self.set_auto_backup_restore(True)
+            return
+
+        if items[0] == 'disable-auto-backup-restore':
+            self.set_auto_backup_restore(False)
+            return
+
+        else:
+            print('\nUnknown command\n')
 
     def do_delete(self, in_args):
         items = in_args.split(' ')
@@ -2713,21 +2939,97 @@ class RopShell(cmd.Cmd):
         if self.rop_chain_registers_to_preserve:
             print('\nPreserving registers: [{0}]\n'.format(self.color_good(', '.join(self.rop_chain_registers_to_preserve))))
 
+    def try_to_wrap_chain(self, chain, tainted_reg):
+        global BackupRestore_chains
+        # BackupRestore_chains = {'reg-to-backup': {'target-reg': {'backup': [Backup_chain, Backup_chain...], 'restore': [Restore_Chain, Restore_Chain...]}}
+
+        final_best_backup = None
+        final_best_restore = None
+        for target_reg in BackupRestore_chains.get(tainted_reg, {}).keys():
+            best_backup = None
+            best_restore = None
+
+            if target_reg == tainted_reg:
+                continue
+
+            for backup_chain in BackupRestore_chains[tainted_reg][target_reg]['backup']:
+                statisfies_condition = True
+                for chain_taints_reg in backup_chain.tainted_regs:
+                    if chain_taints_reg != tainted_reg and chain_taints_reg in self.rop_chain_registers_to_preserve:
+                        statisfies_condition_condition = False
+                        break
+
+                if statisfies_condition:
+                    best_backup = backup_chain
+                    break
+
+            for restore_chain in BackupRestore_chains[tainted_reg][target_reg]['restore']:
+                statisfies_condition = True
+                for chain_taints_reg in restore_chain.tainted_regs:
+                    if chain_taints_reg in self.rop_chain_registers_to_preserve:
+                        statisfies_condition_condition = False
+                        break
+
+                if statisfies_condition:
+                    best_restore = restore_chain
+                    break
+
+            if best_backup != None and best_restore != None:
+                final_best_backup = best_backup
+                final_best_restore = best_restore
+
+                break
+
+        if final_best_backup == None or final_best_restore == None:
+            return None
+
+        final_best_backup = copy.deepcopy(final_best_backup)
+        final_best_restore = copy.deepcopy(final_best_restore)
+
+        final_best_backup.flags |= FLAG_BACKUP_CHAIN
+        final_best_backup.comments = 'BACKUP {0}'.format(tainted_reg)
+        final_best_backup.propagate_flags_overwrite()
+        final_best_backup.propagate_comments_overwrite()
+
+        final_best_restore.flags |= FLAG_RESTORE_CHAIN
+        final_best_restore.comments = 'RESTORE {0}'.format(tainted_reg)
+        final_best_restore.propagate_flags_overwrite()
+        final_best_restore.propagate_comments_overwrite()
+
+        wrapped_chain = join_chains([final_best_backup, chain, final_best_restore])
+        wrapped_chain_copy = copy.deepcopy(wrapped_chain)
+        wrapped_chain_copy.tainted_regs.remove(tainted_reg)
+
+        return wrapped_chain_copy
+
     def serve_chain_list(self, chain_list, list_name, register_to_preserve, max_to_show):
         self.show_preserving_regs_if_any()
         removed_because_preserve = 0
 
         new_list = []
         for c in chain_list:
+            chain_copy = copy.deepcopy(c)
             should_add = True
             for reg in self.rop_chain_registers_to_preserve:
-                if reg in c.tainted_regs:
-                    should_add = False
-                    removed_because_preserve += 1
-                    break
+                if reg in chain_copy.tainted_regs:
+                    if self.config_enable_auto_backup_restore:
+                        wrapped_chain = self.try_to_wrap_chain(chain_copy, reg)
+                        
+                        if wrapped_chain == None:
+                            should_add = False
+                            removed_because_preserve += 1
+                            break
+
+                        else:
+                            chain_copy = wrapped_chain
+
+                    else:
+                        should_add = False
+                        removed_because_preserve += 1
+                        break
 
             if should_add:
-                new_list.append(c)
+                new_list.append(chain_copy)
 
         self.list_in_context = new_list
         self.list_name_in_context = list_name
@@ -2760,7 +3062,12 @@ class RopShell(cmd.Cmd):
 
             for gadget in chain.gadgets:
                 prepend = ' ' * prepend_size
-                sys.stdout.write(prepend + '{0}\n'.format(gadget))
+                sys.stdout.write(prepend + '{0}'.format(gadget))
+
+                if gadget.flags & (FLAG_BACKUP_CHAIN | FLAG_RESTORE_CHAIN):
+                    sys.stdout.write(' # {0}'.format(gadget.comments))
+
+                sys.stdout.write('\n')
 
             sys.stdout.write('\n')
 
@@ -2803,7 +3110,11 @@ class RopShell(cmd.Cmd):
             print('\n# {0} chain'.format(details['origin']))
             for gadget in chain.gadgets:
                 if gadget.gadget_type == 'gadget':
-                    print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, gadget.address, ' ; '.join(gadget.instructions)))
+                    if gadget.flags & (FLAG_BACKUP_CHAIN | FLAG_RESTORE_CHAIN):
+                        print("{0} += struct.pack('{1}', {2})  # {3} # {4}".format(self.rop_chain_variable_name, pack_size, gadget.address, ' ; '.join(gadget.instructions), gadget.comments))
+
+                    else:
+                        print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, gadget.address, ' ; '.join(gadget.instructions)))
 
                     for i in range(remaining_padding_because_retn // padding_size):
                         print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of retn'))
@@ -2829,6 +3140,12 @@ class RopShell(cmd.Cmd):
 
         sys.stdout.write('\n\n')
 
+    def help_CustomValue(self):
+        print('\n"CustomValue" command\n')
+        print('\tUsage:        CustomValue <value-to-add-to-chain>')
+        print('\tExamples:     CustomValue 0xdeadbeef\n')
+        print('\tDescription:  Helps to add a custom value into the gadget chain\n')
+
     def do_CustomValue(self, in_args):
         in_args = in_args.strip()
 
@@ -2852,7 +3169,29 @@ class RopShell(cmd.Cmd):
             if self.constant_contains_badchar(value_integer):
                 print('\n[WARNING] The custom value {0} contains a BADCHAR!'.format(self.hex_converter(value_integer)))
 
-            comments = input('\nSpecify a comment for this gadget: ')
+            addr_hex = self.hex_converter(value_integer)
+            gadget = GadgetsByAddr.get(addr_hex, None)
+
+            if gadget != None:
+                if sys.platform != 'win32':
+                    def input_with_prefill(prompt, text):
+                        def hook():
+                            readline.insert_text(text)
+                            readline.redisplay()
+                        readline.set_pre_input_hook(hook)
+                        result = input(prompt)
+                        readline.set_pre_input_hook()
+                        return result
+
+                    comments = input_with_prefill('\nSpecify a comment for this gadget: ', ' ; '.join(gadget['instructions']))
+
+                else:
+                    print('\n{0} seems to be "{1}"\n'.format(addr_hex, ' ; '.join(gadget['instructions'])))
+                    comments = input('\nSpecify a comment for this gadget: ')
+
+
+            else:
+                comments = input('\nSpecify a comment for this gadget: ')
 
             chain_list = []
             chain_list.append(Chain([Gadget(self.hex_converter(value_integer), [], {}, comments=comments, gadget_type='constant')]))
@@ -2860,6 +3199,7 @@ class RopShell(cmd.Cmd):
             self.serve_chain_list(chain_list, list_name='CustomValue[{0}]'.format(in_args), register_to_preserve=None, max_to_show=1)
 
         except Exception as e:
+            print(e)
             print('\nInvalid argument: {0}\n'.format(in_args))
             return
 
@@ -3914,6 +4254,14 @@ class RopShell(cmd.Cmd):
         except:
             print('Invalid args')
             return
+
+        MAX_CONSTANT_VALUE = 0xffffffff
+        if GADGETS_ARCH_BITS == 64:
+            MAX_CONSTANT_VALUE = 0xffffffffffffffff
+        
+        if constant_value > MAX_CONSTANT_VALUE:
+            print('Constant is too big')
+            return
             
         if self.constant_contains_badchar(constant_value):
             # LoadConstAuxiliary_chains = {'register-to-modify': {'auxiliary-type': [Chain, Chain, Chain...]}}
@@ -4029,6 +4377,15 @@ class RopShell(cmd.Cmd):
             max_to_show = 3
 
         self.serve_chain_list(chain_list, list_name='LoadConst[{0}][{1}]'.format(dest_reg, constant_value_text), register_to_preserve=dest_reg, max_to_show=max_to_show)
+
+    def help_PopPopRet(self):
+        print('\n"PopPopRet" command\n')
+        print('\tUsage:        PopPopRet [max-chains-to-show | all]')
+        print('\tExamples:     PopPopRet')
+        print('\t              PopPopRet 5')
+        print('\t              PopPopRet all\n')
+        print('\tDescription:  Show pop/pop/ret gadgets, except those that taints stack pointer.')
+        print('\t              Gadgets that taints the base pointer have a worse rank\n')
 
     def do_PopPopRet(self, in_args):
         items = []
@@ -4261,6 +4618,42 @@ def bytes_to_hex_escaped(data_bytes):
 
     return ''.join(list(map(lambda x: '\\x{0}'.format(x), hex_str.decode().split(' '))))
 
+def shuffle_without_true_randomness(target_list):
+    old_state = random.getstate()
+
+    # Here the randomness is intentionally removed so the same list will always be sorted the same way
+    random.seed(1338)
+    random.shuffle(target_list)
+    random.setstate(old_state)
+
+def index_gadgets_for_manual_search(gadgets):
+    global AllGadgetsIndex, GadgetsByAddr
+    count = 0
+
+    for index, gadget in enumerate(gadgets):
+        instructions = gadget.get('instructions')
+        address = gadget.get('address')
+        GadgetsByAddr[address] = gadget
+
+        if len(instructions) == 0:
+            continue
+
+        i = instructions[0].strip().find(' ')
+
+        mnemonic = instructions[0].strip()
+
+        if i != -1:
+            mnemonic = instructions[0].strip()[:i]    
+        
+        mnemonic = mnemonic.lower()
+        if AllGadgetsIndex.get(mnemonic, None) == None:
+            AllGadgetsIndex[mnemonic] = []
+
+        AllGadgetsIndex[mnemonic].append(gadget)
+        count += 1
+
+    print('[+] Gadgets indexed for manual search: {0}'.format(count))
+
 
 def main():
     global BAD_CHARS
@@ -4274,6 +4667,7 @@ def main():
                                                "for negative offsets", type=str, default='0x0')
 
     parser.add_argument('--arch', help='Specify the processor architecture of gadgets', choices=['x86', 'x64'], default='x86')
+    parser.add_argument('--auto-backup-restore', help='Enable auto backup/restore of preserver registers', action='store_true')
 
     parser.add_argument('--no-color', help='Disable colored output', action='store_true')
 
@@ -4324,8 +4718,9 @@ def main():
     log_info('[+] Loaded {0} gadgets'.format(len(gadgets)))
 
     gadgets = remove_duplicated_gadgets(gadgets)
-    random.shuffle(gadgets)  # the shuffle will improve the percentage precision
 
+    shuffle_without_true_randomness(gadgets)  # the shuffle will improve the percentage precision
+    index_gadgets_for_manual_search(gadgets)
     initialize_semantic_gadgets(gadgets)
 
     t2 = time.time()
@@ -4335,7 +4730,7 @@ def main():
     if args.no_color or sys.platform == 'win32':
         color = False
 
-    prompt = RopShell(color=color)
+    prompt = RopShell(color=color, auto_bkp_restore=args.auto_backup_restore)
 
     try:
         prompt.cmdloop()
