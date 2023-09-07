@@ -3,13 +3,16 @@ import os
 import ast
 import cmd
 import sys
+
+if sys.platform != 'win32':
+    import readline
+
 import copy
 import time
 import ctypes
 import random
 import struct
 import fnmatch
-import readline
 import argparse
 import binascii
 import traceback
