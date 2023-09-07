@@ -3064,6 +3064,9 @@ class RopShell(cmd.Cmd):
                 prepend = ' ' * prepend_size
                 sys.stdout.write(prepend + '{0}'.format(gadget))
 
+                if not gadget.instructions and gadget.comments:
+                    sys.stdout.write('{0}'.format(gadget.comments))
+
                 if gadget.flags & (FLAG_BACKUP_CHAIN | FLAG_RESTORE_CHAIN):
                     sys.stdout.write(' # {0}'.format(gadget.comments))
 
@@ -3086,7 +3089,8 @@ class RopShell(cmd.Cmd):
                     self.rop_chain_registers_to_preserve.append(self.register_to_preserve_in_context)
 
     def showropchain(self, in_args, highlight_item=None):
-        print("\n{0} =  b''".format(self.rop_chain_variable_name))
+        print('\nbase = 0')
+        print("{0} =  b''".format(self.rop_chain_variable_name))
         pack_size = '<I'
         padding_size = 4
 
@@ -3111,10 +3115,17 @@ class RopShell(cmd.Cmd):
             for gadget in chain.gadgets:
                 if gadget.gadget_type == 'gadget':
                     if gadget.flags & (FLAG_BACKUP_CHAIN | FLAG_RESTORE_CHAIN):
-                        print("{0} += struct.pack('{1}', {2})  # {3} # {4}".format(self.rop_chain_variable_name, pack_size, gadget.address, ' ; '.join(gadget.instructions), gadget.comments))
+                        print("{0} += struct.pack('{1}', base+{2})  # {3} # {4}".format(self.rop_chain_variable_name, pack_size, gadget.address, ' ; '.join(gadget.instructions), gadget.comments))
 
                     else:
-                        print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, gadget.address, ' ; '.join(gadget.instructions)))
+                        if gadget.instructions:
+                            print("{0} += struct.pack('{1}', base+{2})  # {3}".format(self.rop_chain_variable_name, pack_size, gadget.address, ' ; '.join(gadget.instructions)))
+
+                        elif not gadget.instructions and gadget.comments:
+                            print("{0} += struct.pack('{1}', base+{2})  # {3}".format(self.rop_chain_variable_name, pack_size, gadget.address, gadget.comments))
+
+                        else:
+                            print("{0} += struct.pack('{1}', base+{2})".format(self.rop_chain_variable_name, pack_size, gadget.address))
 
                     for i in range(remaining_padding_because_retn // padding_size):
                         print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of retn'))
@@ -3172,7 +3183,11 @@ class RopShell(cmd.Cmd):
             addr_hex = self.hex_converter(value_integer)
             gadget = GadgetsByAddr.get(addr_hex, None)
 
+            gadget_type = 'constant'
+
+            comments = ''
             if gadget != None:
+                gadget_type = 'gadget'
                 if sys.platform != 'win32':
                     def input_with_prefill(prompt, text):
                         def hook():
@@ -3184,6 +3199,7 @@ class RopShell(cmd.Cmd):
                         return result
 
                     comments = input_with_prefill('\nSpecify a comment for this gadget: ', ' ; '.join(gadget['instructions']))
+                    print(comments)
 
                 else:
                     print('\n{0} seems to be "{1}"\n'.format(addr_hex, ' ; '.join(gadget['instructions'])))
@@ -3194,7 +3210,8 @@ class RopShell(cmd.Cmd):
                 comments = input('\nSpecify a comment for this gadget: ')
 
             chain_list = []
-            chain_list.append(Chain([Gadget(self.hex_converter(value_integer), [], {}, comments=comments, gadget_type='constant')]))
+            
+            chain_list.append(Chain([Gadget(self.hex_converter(value_integer), [], {}, comments=comments, gadget_type=gadget_type)]))
 
             self.serve_chain_list(chain_list, list_name='CustomValue[{0}]'.format(in_args), register_to_preserve=None, max_to_show=1)
 
