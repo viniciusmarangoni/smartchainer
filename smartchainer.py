@@ -3134,18 +3134,18 @@ class RopShell(cmd.Cmd):
                             print("{0} += struct.pack('{1}', base+{2})".format(self.rop_chain_variable_name, pack_size, gadget.address))
 
                     for i in range(remaining_padding_because_retn // padding_size):
-                        print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of retn'))
+                        print("{0} += struct.pack('{1}', {2})       # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of retn'))
 
                     remaining_padding_because_retn = gadget.stack_movement_after_ret
 
                 else:
-                    print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, gadget.address, gadget.comments))
+                    print("{0} += struct.pack('{1}', {2})       # {3}".format(self.rop_chain_variable_name, pack_size, gadget.address, gadget.comments))
 
                 if gadget.intentional_stack_movement_before_ret == False:
                     stack_movement_before_ret = gadget.stack_movement_before_ret
                     if stack_movement_before_ret > padding_size:
                         for i in range((stack_movement_before_ret - padding_size) // padding_size):
-                            print("{0} += struct.pack('{1}', {2})  # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of stack movement'))
+                            print("{0} += struct.pack('{1}', {2})       # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of stack movement'))
 
             # End highlight
             if index == highlight_item:
