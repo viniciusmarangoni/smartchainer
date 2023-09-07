@@ -153,7 +153,17 @@ class Gadget:
 
     def __str__(self):
         if self.gadget_type == 'gadget':
-            return '{0}: {1}'.format(self.address, ' ; '.join(self.instructions))
+            if self.instructions and not self.comments:
+                return '{0}: {1}'.format(self.address, ' ; '.join(self.instructions))
+
+            elif self.comments and not self.instructions:
+                return '{0}: {1}'.format(self.address, self.comments)
+
+            elif self.instructions and self.comments:
+                return '{0}: {1} # {2}'.format(self.address, ' ; '.join(self.instructions), self.comments)
+
+            else:
+                return '{0}'.format(self.address)
 
         elif self.gadget_type == 'constant':
             return '{0}: {1}'.format(self.address, self.comments)
@@ -3063,13 +3073,6 @@ class RopShell(cmd.Cmd):
             for gadget in chain.gadgets:
                 prepend = ' ' * prepend_size
                 sys.stdout.write(prepend + '{0}'.format(gadget))
-
-                if not gadget.instructions and gadget.comments:
-                    sys.stdout.write('{0}'.format(gadget.comments))
-
-                if gadget.flags & (FLAG_BACKUP_CHAIN | FLAG_RESTORE_CHAIN):
-                    sys.stdout.write(' # {0}'.format(gadget.comments))
-
                 sys.stdout.write('\n')
 
             sys.stdout.write('\n')
