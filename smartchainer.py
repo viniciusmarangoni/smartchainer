@@ -2644,6 +2644,12 @@ class RopShell(cmd.Cmd):
         try:
             normalized_search_query = self.normalize_instructions(in_args)
 
+            normalized_search_query = normalized_search_query.replace('[', 'TAG_BRACKET_OPEN')
+            normalized_search_query = normalized_search_query.replace(']', 'TAG_BRACKET_CLOSE')
+
+            normalized_search_query = normalized_search_query.replace('TAG_BRACKET_OPEN', '[[]')
+            normalized_search_query = normalized_search_query.replace('TAG_BRACKET_CLOSE', '[]]')
+
             if normalized_search_query == '':
                 print('\nSearch query is empty\n')
                 return
