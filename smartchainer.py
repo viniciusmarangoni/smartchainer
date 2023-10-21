@@ -2515,6 +2515,11 @@ class RopShell(cmd.Cmd):
 
         print('')
 
+    def help_help(self):
+        print('\n"help" command\n')
+        print('\tUsage:        help <command>\n')
+        print('\tDescription:  Show help message for a given command\n')
+
     def do_help(self, arg):
         aliases = self.get_aliases()
         alias = aliases.get(arg.lower(), None)
@@ -2536,6 +2541,7 @@ class RopShell(cmd.Cmd):
             'del': 'delete',
             'de':  'delete',
             'sh':  'show',
+            'se':  'search',
             'cv':  'CustomValue',
             'mr':  'MoveReg',
             'sp':  'StackPivot',
@@ -2720,6 +2726,21 @@ class RopShell(cmd.Cmd):
         return_list = list(map(lambda x: x[1], sorted_list))
         return return_list
 
+    def help_search(self):
+        print('\n"search <query>" or "se <query>" command\n')
+        print('\tUsage:       search <query>')
+        print('\t             sh <query>\n')
+        print('\tExamples:')
+        print('\t             search mov eax, ebx')
+        print('\t             search pop e?x; pop e?x; ret')
+        print('\t             search mov *, ebx\n')
+
+        print('\tDescription: Searches in all gadgets present in the loaded file.\n'\
+              '\tThe search query is case insensitive. It supports the wildcards ? and *.\n'\
+              '\tFor convenience, the results are shown sorted by rank, with the bottom \n'\
+              '\tlines being the gadgets with best rank (so you don\'t have to scroll up)\n')
+
+
     def do_search(self, in_args):
         global AllGadgetsIndex
 
@@ -2790,6 +2811,7 @@ class RopShell(cmd.Cmd):
             normalized_instructions = self.normalize_instructions(';'.join(gadget['instructions']))
             print('{0}: {1}'.format(gadget['address'], normalized_instructions))
 
+        print('')
 
     def do_show(self, in_args):
         if in_args in ['rop-chain', 'rc']:
