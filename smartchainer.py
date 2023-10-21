@@ -2532,24 +2532,26 @@ class RopShell(cmd.Cmd):
 
     def get_aliases(self):
         aliases = {
-            '?':   'help',
-            'ar':  'AddReg',
-            'lc':  'LoadConst',
-            'rm':  'ReadMem',
-            'sr':  'SubReg',
-            'ac':  'append-chain',
-            'del': 'delete',
-            'de':  'delete',
-            'sh':  'show',
-            'se':  'search',
-            'cv':  'CustomValue',
-            'mr':  'MoveReg',
-            'sp':  'StackPivot',
-            'zr':  'ZeroReg',
-            'gsp': 'GetStackPtr',
-            'ppr': 'PopPopRet',
-            'sm':  'StoreMem',
-            'conf': 'config'
+            '?':    'help',
+            'q':    'exit',
+            'quit': 'exit',
+            'ar':   'AddReg',
+            'lc':   'LoadConst',
+            'rm':   'ReadMem',
+            'sr':   'SubReg',
+            'ac':  ' append-chain',
+            'del':  'delete',
+            'de':   'delete',
+            'sh':   'show',
+            'se':   'search',
+            'cv':   'CustomValue',
+            'mr':   'MoveReg',
+            'sp':   'StackPivot',
+            'zr':   'ZeroReg',
+            'gsp':  'GetStackPtr',
+            'ppr':  'PopPopRet',
+            'sm':   'StoreMem',
+            'conf': 'config',
         }
 
         return aliases
@@ -3808,13 +3810,15 @@ class RopShell(cmd.Cmd):
 
         return self.register_completion(text, line, begidx, endidx)
 
+
     def help_SubReg(self):
         print('\n"SubReg" command\n')
-        print('\tUsage:        SubReg <dst-register> <subtractor-register> [max-chains-to-show | all]')
+        print('\tUsage:        SubReg <dst-register> <subtractor-register | constant> [max-chains-to-show | all]')
         print('\tExamples:     SubReg eax ebx')
         print('\t              SubReg eax ebx 10')
+        print('\t              SubReg eax 0x4 all')
         print('\t              SubReg eax ebx all\n')
-        print('\tDescription:  Show gadget chains that subract the value of <subtractor-register> from <dst-register> and \n' \
+        print('\tDescription:  Show gadget chains that subract the value of <subtractor-register> from <dst-register | constant> and \n' \
               '\t              store the result in <dst-register>.\n')
 
     def do_AddReg(self, in_args):
