@@ -2500,7 +2500,57 @@ class RopShell(cmd.Cmd):
         else:
             return self.color_bad('{0}'.format(grade))
 
+    def help_alias(self):
+        print('\n"alias" command\n')
+        print('\tUsage:        alias\n')
+        print('\tDescription:  Show available command aliases\n')
+
+    def do_alias(self, in_args):
+        print('\nAliases:')
+        aliases = self.get_aliases()
+
+        for k in aliases.keys():
+            spaces = 5 - len(k)
+            print('    {0}{1}-> {2}'.format(k, ' '*spaces, aliases[k]))
+
+        print('')
+
+    def do_help(self, arg):
+        aliases = self.get_aliases()
+        alias = aliases.get(arg.lower(), None)
+
+        if alias != None:
+            super().do_help(alias)
+            return
+
+        super().do_help(arg)
+
+    def get_aliases(self):
+        aliases = {
+            '?':   'help',
+            'ar':  'AddReg',
+            'lc':  'LoadConst',
+            'rm':  'ReadMem',
+            'sr':  'SubReg',
+            'ac':  'append-chain',
+            'del': 'delete',
+            'de':  'delete',
+            'sh':  'show',
+            'cv':  'CustomValue',
+            'mr':  'MoveReg',
+            'sp':  'StackPivot',
+            'zr':  'ZeroReg',
+            'gsp': 'GetStackPtr',
+            'ppr': 'PopPopRet',
+            'sm':  'StoreMem',
+            'conf': 'config'
+        }
+
+        return aliases
+
     def onecmd(self, line):
+        aliases = self.get_aliases()
+
         cmd, arg, line = self.parseline(line)
 
         if not line:
@@ -2518,6 +2568,10 @@ class RopShell(cmd.Cmd):
 
         else:
             func = None
+            alias = aliases.get(cmd.lower(), None)
+
+            if alias != None:
+                cmd = alias
 
             try:
                 for attr in dir(self):
@@ -2738,10 +2792,10 @@ class RopShell(cmd.Cmd):
 
 
     def do_show(self, in_args):
-        if in_args == 'rop-chain':
+        if in_args in ['rop-chain', 'rc']:
             self.showropchain(in_args)
 
-        elif in_args == 'preserved-regs':
+        elif in_args in ['preserved-regs', 'pr']:
             if self.rop_chain_registers_to_preserve == []:
                 print('\nNo registers are being preserved\n')
 
@@ -2749,16 +2803,18 @@ class RopShell(cmd.Cmd):
                 self.show_preserving_regs_if_any()
 
         else:
-            print('\nUnknown command\n')
+            print('\nIncomplete command. Use "help show"\n')
 
 
     def help_show(self):
-        print('\n"show rop-chain" command\n')
-        print('\tUsage:       show rop-chain\n')
+        print('\n"show rop-chain" or "sh rc" command\n')
+        print('\tUsage:       show rop-chain')
+        print('\t             sh rc\n')
         print('\tDescription: Shows the current ROP Chain being built\n')
 
-        print('\n"show preserved-regs" command\n')
-        print('\tUsage:       show preserved-regs\n')
+        print('\n"show preserved-regs" or ""sh pr" command\n')
+        print('\tUsage:       show preserved-regs')
+        print('\t             sh pr\n')
         print('\tDescription: When a given operation (like ZeroReg, MoveReg, AddReg, etc) is appended \n'\
               '\t             to your ROP Chain, the register targeted by the operation is added to a list of \n'\
               "\t             registers to be preserved in subsequent shown operations (you don't want a subsequent \n"\
@@ -2817,16 +2873,17 @@ class RopShell(cmd.Cmd):
             print('\nUnknown command\n')
             return
 
-        if items[0] == 'enable-auto-backup-restore':
+        if items[0] in ['enable-auto-backup-restore', 'eabr']:
             self.set_auto_backup_restore(True)
             return
 
-        if items[0] == 'disable-auto-backup-restore':
+        if items[0] in ['disable-auto-backup-restore', 'dabr']:
             self.set_auto_backup_restore(False)
             return
 
         else:
-            print('\nUnknown command\n')
+            print('\nIncomplete command. Use "help config"\n')
+
 
     def do_delete(self, in_args):
         items = in_args.split(' ')
@@ -2835,7 +2892,7 @@ class RopShell(cmd.Cmd):
             print('\nUnknown command\n')
             return
 
-        if items[0] == 'preserved-reg':
+        if items[0] in ['preserved-reg', 'pr']:
             if len(items) != 2:
                 print('\nInvalid parameters. You must specify which register to delete from\n'\
                      'the preserving list or specify "all" to delete all registers.\n')
@@ -2844,7 +2901,7 @@ class RopShell(cmd.Cmd):
 
             self.flush_registers_to_preserve(items[1])
 
-        elif items[0] == 'rop-chain':
+        elif items[0] in ['rop-chain', 'rc']:
             if len(items) != 2:
                 print('\nInvalid parameters. You must specify "last-item" to delete the last\n'\
                       'item in the rop chain or "all" to delete the complete rop chain.\n')
@@ -2853,17 +2910,21 @@ class RopShell(cmd.Cmd):
             self.delete_from_ropchain(items[1])
 
         else:
-            print('\nUnknown command\n')
+            print('\nIncomplete command. Use "help delete"\n')
+
 
     def help_delete(self):
-        print('\n"delete rop-chain" command')
+        print('\n"delete rop-chain" or "del rc" command')
         print('\tUsage:       delete rop-chain')
+        print('\t             del rc\n')
         print('\tDescription: Resets the ROP Chain you were building with the "append-chain" command\n')
 
-        print('\n"delete preserved-reg" command\n')
-        print('\tUsage:       delete preserved-reg <register-to-stop-preserving | all>\n')
+        print('\n"delete preserved-reg" or "del pr" command\n')
+        print('\tUsage:       delete preserved-reg <register-to-stop-preserving | all>')
+        print('\t             del pr <register-to-stop-preserving | all>\n')
         print('\tExamples:    delete preserved-reg eax')
         print('\t             delete preserved-reg ebx')
+        print('               del pr ebx')
         print('\t             delete preserved-reg all\n')
         print('\tDescription: When a given operation (like ZeroReg, MoveReg, AddReg, etc) is appended \n'\
               '\t             to your ROP Chain, the register targeted by the operation is added to a list of \n'\
@@ -2887,7 +2948,7 @@ class RopShell(cmd.Cmd):
             print('\nInvalid argument\n')
             return
 
-        if items[0] == 'preserved-reg':
+        if items[0] in ['preserved-reg', 'pr']:
             if len(items) != 2:
                 print('\nYou must specify the register to be added\n')
                 return
@@ -2904,7 +2965,7 @@ class RopShell(cmd.Cmd):
             print('\nDone\n')
             return
 
-        print('\nInvalid argument\n')
+        print('\nIncomplete command. Use "help add"\n')
 
     def complete_add(self, text, line, begidx, endidx):
         completions = ['preserved-reg']
@@ -2914,9 +2975,11 @@ class RopShell(cmd.Cmd):
         return [s[offs:] + ' ' for s in completions if s.startswith(mline)]
 
     def help_add(self):
-        print('\n"add preserved-reg" command')
+        print('\n"add preserved-reg" or "add pr" command')
         print('\tUsage:       add preserved-reg <register-name>')
-        print('\tExample:     add preserved-reg eax\n')
+        print('\t             add pr <register-name>\n')
+        print('\tExample:     add preserved-reg eax')
+        print('\t             add pr ebx\n')
         print('\tDescription: When you use an operation like MoveReg or ZeroReg, the listing chains will exclude\n'\
               '\t             from the listing those chains that taints the registers being preserved.\n'\
               '\t             Use this command to add a register to the list of registers being preserved.\n')
@@ -4602,7 +4665,7 @@ class RopShell(cmd.Cmd):
         items = in_args.split(' ')
 
         if not in_args or len(items) == 0:
-            print('\nInvalid args\n')
+            print('\nIncomplete command. Use "help calc"\n')
             return
 
         if items[0] == 'neg':
