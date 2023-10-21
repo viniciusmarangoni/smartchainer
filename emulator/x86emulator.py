@@ -14,6 +14,10 @@ DEFAULT_STACK_START_PAGE = 0x0075c000
 DEFAULT_STACK_PTR = DEFAULT_STACK_START_PAGE + 0x2220
 OPERATION_CALL = 0x1 << 4
 OPERATION_JMP = 0x1 << 5
+OPERATION_INTERRUPT = 0x1 << 6
+OPERATION_SYSCALL = 0x1 << 7
+OPERATION_DBGBREAK = 0x1 << 8
+
 SEGMENT_REGISTER_DS = 0x1 << 0
 SEGMENT_REGISTER_SS = 0x1 << 1
 SEGMENT_REGISTER_ES = 0x1 << 2
@@ -21,9 +25,9 @@ SEGMENT_REGISTER_FS = 0x1 << 3
 SEGMENT_REGISTER_GS = 0x1 << 4
 
 class x86Instruction:
-    NO_OPERAND_INSTRUCTIONS = ['ret', 'nop', 'leave', 'pushad', 'pushal', 'popad', 'popal']
+    NO_OPERAND_INSTRUCTIONS = ['ret', 'nop', 'leave', 'pushad', 'pushal', 'popad', 'popal', 'int', 'int3', 'syscall', 'endbr32', 'endbr64', 'vzeroupper']
     SINGLE_OPERAND_INSTRUCTIONS = ['push', 'pop', 'neg', 'not', 'inc', 'retn', 'dec', 'call', 'jmp', 'sete']
-    DOUBLE_OPERAND_INSTRUCTIONS = ['mov', 'xor', 'add', 'adc', 'sub', 'or', 'and', 'cmp', 'xchg', 'test', 'lds', 'lss', 'les', 'lfs', 'lgs', 'lea', 'sbb', 'ror', 'rcr', 'rol', 'rcl', 'shl', 'sal', 'shr', 'sar']
+    DOUBLE_OPERAND_INSTRUCTIONS = ['mov', 'cmovne', 'movzx', 'movsxd', 'bsf', 'xor', 'add', 'adc', 'sub', 'or', 'and', 'cmp', 'xchg', 'test', 'lds', 'lss', 'les', 'lfs', 'lgs', 'lea', 'sbb', 'ror', 'rcr', 'rol', 'rcl', 'shl', 'sal', 'shr', 'sar']
     VARIABLE_OPERAND_INSTRUCTIONS = []  # ['sal']
     KNOWN_INSTRUCTIONS = NO_OPERAND_INSTRUCTIONS + SINGLE_OPERAND_INSTRUCTIONS + DOUBLE_OPERAND_INSTRUCTIONS + VARIABLE_OPERAND_INSTRUCTIONS
 
@@ -293,6 +297,18 @@ class x86Emulator:
         elif parsed_instruction.mnemonic == 'mov':
             self.run_mov(parsed_instruction)
 
+        elif parsed_instruction.mnemonic == 'cmovne':
+            self.run_cmovne(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'movzx':
+            self.run_movzx(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'movsxd':
+            self.run_movsxd(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'bsf':
+            self.run_bsf(parsed_instruction)
+            
         elif parsed_instruction.mnemonic == 'ret':
             self.run_ret(parsed_instruction)
 
@@ -304,6 +320,15 @@ class x86Emulator:
 
         elif parsed_instruction.mnemonic == 'nop':
             self.run_nop(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'endbr64':
+            self.run_endbr64(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'endbr32':
+            self.run_endbr32(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'vzeroupper':
+            self.run_vzeroupper(parsed_instruction)
 
         elif parsed_instruction.mnemonic == 'adc':
             self.run_adc(parsed_instruction)
@@ -343,6 +368,15 @@ class x86Emulator:
 
         elif parsed_instruction.mnemonic == 'call':
             self.run_call(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'int':
+            self.run_int(parsed_instruction)
+
+        elif parsed_instruction.mnemonic == 'syscall':
+            self.run_syscall(parsed_instruction)
+        
+        elif parsed_instruction.mnemonic == 'int3':
+            self.run_dbgbreak(parsed_instruction)
 
         elif parsed_instruction.mnemonic == 'jmp':
             self.run_jmp(parsed_instruction)
@@ -1025,6 +1059,15 @@ class x86Emulator:
     def run_call(self, call_instr):
         self.notify_flow_deviation_exception(OPERATION_CALL)
 
+    def run_int(self, call_instr):
+        self.notify_flow_deviation_exception(OPERATION_INTERRUPT)
+
+    def run_syscall(self, call_instr):
+        self.notify_flow_deviation_exception(OPERATION_SYSCALL)
+
+    def run_dbgbreak(self, call_instr):
+        self.notify_flow_deviation_exception(OPERATION_DBGBREAK)
+
     def run_xchg(self, xchg_instr):
         if xchg_instr.second_operand in self.KNOWN_REGISTERS:
             right_operand_value = self.get_register_value(xchg_instr.second_operand)
@@ -1556,6 +1599,19 @@ class x86Emulator:
         # literally do nothing
         pass
 
+    def run_endbr64(self, nop_instr):
+        # do nothing - endbr64 is an instruction used in control flow
+        pass
+
+    def run_endbr32(self, nop_instr):
+        # do nothing - endbr32 is an instruction used in control flow
+        pass
+
+    def run_vzeroupper(self, nop_instr):
+        # do nothing - this instructions zeroes some parts of YMM and ZMM registers, but these are not useful for us
+        # this instruction is probably not problematic (should not present bad side effects), so we can safely ignore it
+        pass
+
     def run_push(self, push_instr):
         if push_instr.first_operand in self.KNOWN_REGISTERS:
             size_register = self.get_register_size_bits(push_instr.first_operand)
@@ -1652,7 +1708,111 @@ class x86Emulator:
         else:
             self.esp += 4
 
+    def run_movzx(self, mov_instr):
+        if mov_instr.second_operand in self.KNOWN_REGISTERS:
+            immediate = self.get_register_value(mov_instr.second_operand)
+
+        elif '[' in mov_instr.second_operand:
+            immediate = self.dereference_operand_read(mov_instr.second_operand)
+
+            if immediate == None:
+                # read exception occurred
+                immediate = INVALID_READ_DATA
+
+        else:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.second_operand))
+
+        if mov_instr.first_operand not in self.KNOWN_REGISTERS:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.first_operand))
+            
+        self.set_register_value(mov_instr.first_operand, immediate)
+
+    def run_movsxd(self, mov_instr):
+        if mov_instr.first_operand not in self.KNOWN_REGISTERS:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.first_operand))
+
+        if mov_instr.second_operand not in self.KNOWN_REGISTERS:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.second_operand))
+
+        immediate = self.get_register_value(mov_instr.second_operand)
+        src_bits = self.get_register_size_bits(mov_instr.second_operand)
+
+        if src_bits == 8:
+            immediate = ctypes.c_int8(immediate).value
+
+        elif src_bits == 16:
+            immediate = ctypes.c_int16(immediate).value
+
+        elif src_bits == 32:
+            immediate = ctypes.c_int32(immediate).value
+
+        else:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.second_operand))
+
+        dst_bits = self.get_register_size_bits(mov_instr.first_operand)
+
+        if dst_bits == 8:
+            immediate = ctypes.c_uint8(immediate).value
+
+        elif dst_bits == 16:
+            immediate = ctypes.c_uint16(immediate).value
+
+        elif dst_bits == 32:
+            immediate = ctypes.c_uint32(immediate).value
+
+        elif dst_bits == 64:
+            immediate = ctypes.c_uint64(immediate).value
+
+        else:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.first_operand))
+
+        self.set_register_value(mov_instr.first_operand, immediate)
+
+    def run_bsf(self, mov_instr):
+        if mov_instr.first_operand not in self.KNOWN_REGISTERS:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.first_operand))
+
+        if mov_instr.second_operand not in self.KNOWN_REGISTERS:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.second_operand))
+
+        immediate = self.get_register_value(mov_instr.second_operand)
+        found_index = None
+        for index in range(0, 64):
+            if immediate & (1 << index) != 0:
+                found_index = index
+                break
+
+        if found_index != None:
+            self.set_register_value(mov_instr.first_operand, found_index)
+
     def run_mov(self, mov_instr):
+        if mov_instr.second_operand.startswith('0x'):
+            immediate = int(mov_instr.second_operand, 16)
+
+        elif mov_instr.second_operand in self.KNOWN_REGISTERS:
+            immediate = self.get_register_value(mov_instr.second_operand)
+
+        elif '[' in mov_instr.second_operand:
+            immediate = self.dereference_operand_read(mov_instr.second_operand)
+
+            if immediate == None:
+                # read exception occurred
+                immediate = INVALID_READ_DATA
+
+        else:
+            raise Exception('Unknown operand: {0}'.format(mov_instr.second_operand))
+
+        if mov_instr.first_operand in self.KNOWN_REGISTERS:
+            self.set_register_value(mov_instr.first_operand, immediate)
+
+        elif '[' in mov_instr.first_operand:
+            self.dereference_operand_store(mov_instr.first_operand, immediate)
+
+    def run_cmovne(self, mov_instr):
+        # this instruction is a conditional move if not equals
+        # it is more important to detect side effects than actually being precise in this instruction
+        # so we just assume the move will occur and implement the move operation
+
         if mov_instr.second_operand.startswith('0x'):
             immediate = int(mov_instr.second_operand, 16)
 
