@@ -2500,6 +2500,39 @@ class RopShell(cmd.Cmd):
         else:
             return self.color_bad('{0}'.format(grade))
 
+    def onecmd(self, line):
+        cmd, arg, line = self.parseline(line)
+
+        if not line:
+            return self.emptyline()
+
+        if cmd is None:
+            return self.default(line)
+
+        self.lastcmd = line
+        if line == 'EOF' :
+            self.lastcmd = ''
+
+        if cmd == '':
+            return self.default(line)
+
+        else:
+            func = None
+
+            try:
+                for attr in dir(self):
+                    if attr.startswith('do_') and callable(getattr(self, attr)):
+                        if attr[3:].lower() == cmd.lower():
+                            func = getattr(self, attr)
+                            break
+
+            except AttributeError:
+                return self.default(line)
+
+            if func == None:
+                return self.default(line)
+
+            return func(arg)
 
     def calculate_stats_semantic_gadgets(self):
         single_nested_key_lists = [('ZeroReg', ZeroReg_chains), ('GetStackPtr', GetStackPtr_chains)]
