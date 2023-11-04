@@ -220,7 +220,7 @@ def filter_gadgets_from_rpplusplus(lines, base_addr=0):
 
                 if different_arch:
                     print('[!] The specified gadgets file seems to contain instructions for {0} architecture'.format(detected_architecture))
-                    answer = input('[?] Modify the architecture to {0}? [Y/n]: '.format(detected_architecture))
+                    answer = input('[?] Set the architecture to {0}? [Y/n]: '.format(detected_architecture))
 
                     if answer.upper() in ['Y', '']:
                         if detected_architecture == 'x86':
@@ -847,8 +847,12 @@ def analyze_for_MovReg(gadget):
 
             add_to_MoveReg(move['src'], move['dst'], Chain([Gadget(address, instructions, state_transition_info)]))
 
+    stack_ptr = 'esp'
+    if GADGETS_ARCH_BITS == 64:
+        stack_ptr = 'rsp'
+
     if first_instr.mnemonic == 'mov' and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
-        if first_instr.first_operand in ['esp', 'rsp']:
+        if first_instr.first_operand == stack_ptr:
             MovReg_finish_analysis(potential_stack_pivot=True)
 
         else:
@@ -856,7 +860,7 @@ def analyze_for_MovReg(gadget):
 
     elif first_instr.mnemonic == 'xchg' and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
         if first_instr.first_operand != first_instr.second_operand:
-            if first_instr.first_operand in ['esp', 'rsp'] or first_instr.second_operand in ['esp', 'rsp']:
+            if first_instr.first_operand == stack_ptr or first_instr.second_operand == stack_ptr:
                 MovReg_finish_analysis(potential_stack_pivot=True)
 
             else:
@@ -867,7 +871,7 @@ def analyze_for_MovReg(gadget):
 
     elif first_instr.mnemonic == 'lea' and first_instr.first_operand in ALL_KNOWN_REGISTERS:
         if '[' in first_instr.second_operand:
-            if '[esp]' in first_instr.second_operand or '[rsp]' in first_instr.second_operand:
+            if first_instr.first_operand == stack_ptr:
                 MovReg_finish_analysis(potential_stack_pivot=True)
 
             else:
@@ -1030,11 +1034,15 @@ def analyze_for_AddReg(gadget):
             add_to_AddReg(result_reg, adder_reg, Chain([Gadget(address, instructions, state_transition_info)]))
 
 
+    stack_ptr = 'esp'
+    if GADGETS_ARCH_BITS == 64:
+        stack_ptr = 'rsp'
+
     if first_instr.mnemonic in ['add', 'adc'] and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
         result_reg = first_instr.first_operand
         adder_reg = first_instr.second_operand
 
-        if first_instr.first_operand in ['esp', 'rsp']:
+        if first_instr.first_operand == stack_ptr:
             AddReg_finish_analysis(potential_stack_pivot=True)
 
         else:
@@ -1086,7 +1094,7 @@ def analyze_for_AddReg(gadget):
                             else:
                                 adder_reg = items[0]
 
-                            if result_reg in ['esp', 'rsp']:
+                            if result_reg == stack_ptr:
                                 AddReg_finish_analysis(potential_stack_pivot=True)
 
                             else:
