@@ -29,6 +29,7 @@ PENALTY_FOR_TAINTED_REG = 50
 PENALTY_PER_MEMORY_DIFF = 150
 PENALTY_PER_STACK_MISALIGN = (PENALTY_PER_MEMORY_DIFF * 4) * 2
 PENALTY_GET_STACK_PTR_WITH_EBP = (PENALTY_PER_MEMORY_DIFF * 4) * 2
+PENALTY_GET_STACK_PTR_OFFSET = PENALTY_GET_STACK_PTR_WITH_EBP
 PENALTY_PER_STACK_TAINT_COLLATERAL = 10000
 PENALTY_PER_STACK_MOVEMENT_NEGATIVE = 10000
 PENALTY_PER_EXCEPTION = 10000
@@ -76,6 +77,9 @@ NotReg_chains = {}
 
 # GetStackPtr_chains = {'destination-reg': [Chain, Chain, Chain...]}
 GetStackPtr_chains = {}
+
+# GetStackPtrAuxiliary_chains = {'destination-reg': [Chain, Chain...]}
+GetStackPtrAuxiliary_chains = {}
 
 # AddStackPtrConst_chains = {'hex-constant': [Chain, Chain, Chain...]}
 AddStackPtrConst_chains = {}
@@ -758,6 +762,13 @@ def analyze_for_ZeroReg(gadget):
             if value == 0:
                 ZeroReg_finish_analysis()
 
+def add_to_GetStackPtrAuxiliary(dst_reg: str, chain: Chain):
+    global GetStackPtrAuxiliary_chains
+
+    if GetStackPtrAuxiliary_chains.get(dst_reg, None) == None:
+        GetStackPtrAuxiliary_chains[dst_reg] = []
+
+    GetStackPtrAuxiliary_chains[dst_reg].append(chain)
 
 def add_to_MoveReg(src_reg: str, dst_reg, chain: Chain):
     global MoveReg_chains
@@ -769,6 +780,52 @@ def add_to_MoveReg(src_reg: str, dst_reg, chain: Chain):
         MoveReg_chains[src_reg][dst_reg] = []
 
     MoveReg_chains[src_reg][dst_reg].append(chain)
+
+
+def analyze_for_GetStackPtrAuxiliary(gadget):
+    instructions = gadget['instructions']
+    address = gadget['address']
+    first_instr = x86Instruction(instructions[0])
+
+    leaker_reg = None
+    stack_ptr = 'esp'
+    base_ptr = 'ebp'
+    if GADGETS_ARCH_BITS == 64:
+        stack_ptr = 'rsp'
+        base_ptr = 'rbp'
+
+    def GetStackPtrAuxiliary_finish_analysis():
+        emu = x86Emulator(bits=GADGETS_ARCH_BITS)
+
+        initial_state = get_emulator_state(emu)
+        approx_leak_value = emu.get_register_value(leaker_reg)
+        emu = execute_gadget(emu, instructions)
+        effective_leaked_value = emu.get_register_value(first_instr.first_operand)
+
+        diff = max(approx_leak_value, effective_leaked_value) - min(approx_leak_value, effective_leaked_value)
+
+        if diff <= 0xffff:
+            new_state = get_emulator_state(emu)
+
+            additional_penalty = 0
+            if leaker_reg == base_ptr:
+                additional_penalty = PENALTY_GET_STACK_PTR_WITH_EBP
+
+            additional_penalty += PENALTY_GET_STACK_PTR_OFFSET
+            state_transition_info = get_state_transition_info(instructions, initial_state, new_state, taint_exceptions=[first_instr.first_operand], additional_penalty=additional_penalty)
+
+            add_to_GetStackPtrAuxiliary(first_instr.first_operand, Chain([Gadget(address, instructions, state_transition_info)]))
+
+    if first_instr.mnemonic == 'lea' and first_instr.first_operand in ALL_KNOWN_REGISTERS:
+        if first_instr.first_operand not in ['esp', 'rsp'] and '[' in first_instr.second_operand:
+            if stack_ptr in first_instr.second_operand or base_ptr in first_instr.second_operand:
+                if stack_ptr in first_instr.second_operand:
+                    leaker_reg = stack_ptr
+
+                elif base_ptr in first_instr.second_operand:
+                    leaker_reg = base_ptr
+
+                GetStackPtrAuxiliary_finish_analysis()
 
 
 def analyze_for_MovReg(gadget):
@@ -1214,11 +1271,15 @@ def analyze_for_SubReg(gadget):
             add_to_SubReg(result_reg, subber_reg, Chain([Gadget(address, instructions, state_transition_info)]))
 
 
+    stack_ptr = 'esp'
+    if GADGETS_ARCH_BITS == 64:
+        stack_ptr = 'rsp'
+
     if first_instr.mnemonic in ['sub', 'sbb'] and first_instr.first_operand in ALL_KNOWN_REGISTERS and first_instr.second_operand in ALL_KNOWN_REGISTERS:
         result_reg = first_instr.first_operand
         subber_reg = first_instr.second_operand
         
-        if result_reg in ['esp', 'rsp']:
+        if result_reg == stack_ptr:
             SubReg_finish_analysis(potential_stack_pivot=True)
 
         else:
@@ -1923,6 +1984,7 @@ def populate_GetStackPtr():
         chains =  MoveReg_chains.get(stack_ptr, {}).get(reg, [])
         chains += AddReg_chains.get(reg, {}).get(stack_ptr, [])
         chains += SubReg_chains.get(reg, {}).get(stack_ptr, [])
+        chains += GetStackPtrAuxiliary_chains.get(reg, {})
 
         if chains:
             if GetStackPtr_chains.get(reg, None) == None:
@@ -2294,6 +2356,7 @@ def initialize_semantic_gadgets(gadgets):
     analyzers.append(analyze_for_PopPopRet)
     analyzers.append(analyze_for_AddStackPtrConst)
     analyzers.append(analyze_for_SubStackPtrConst)
+    analyzers.append(analyze_for_GetStackPtrAuxiliary)
 
 
     num_gadgets = len(gadgets)
