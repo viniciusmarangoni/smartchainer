@@ -114,6 +114,12 @@ class x86Emulator:
             self.KNOWN_REGISTERS += ['r8w', 'r9w', 'r10w', 'r11w', 'r12w', 'r13w', 'r14w', 'r15w']
             self.KNOWN_REGISTERS += ['r8b', 'r9b', 'r10b', 'r11b', 'r12b', 'r13b', 'r14b', 'r15b']
 
+        self.DEFAULT_STACK_START_PAGE = 0x0075c000
+
+        if self.BITS == 64:
+            self.DEFAULT_STACK_START_PAGE = 0x7fffff880075c000
+
+        self.DEFAULT_STACK_PTR = self.DEFAULT_STACK_START_PAGE + 0x2220
         self.init_memory()
         self.map_stack()
         self.set_registers_default_initial_state()
@@ -148,7 +154,7 @@ class x86Emulator:
         self.map_new_stack_on_maperror = flag
 
     def map_stack(self):
-        self.stack_page_start = DEFAULT_STACK_START_PAGE
+        self.stack_page_start = self.DEFAULT_STACK_START_PAGE
         self.stack_num_pages = 3
 
         for i in range(self.stack_num_pages):
@@ -223,7 +229,7 @@ class x86Emulator:
                     self.notify_memory_exception(page, addr_to_write, MEM_WRITE, REASON_FAR_FROM_SP)
                     return None
 
-            offset = addr_to_write & 0xffffffff00000fff
+            offset = addr_to_write & 0x0000000000000fff
             self.memory[page][offset] = b
             self.memory_write_count += 1
             self.memory_write_list.append({'page': page, 'offset': offset, 'byte': b})
@@ -1835,6 +1841,21 @@ class x86Emulator:
         elif '[' in mov_instr.first_operand:
             self.dereference_operand_store(mov_instr.first_operand, immediate)
 
+    def get_packed_invalid_read_data(self, read_size):
+        if read_size == 8:
+            return struct.pack('<Q', 0xdeadbeefdeadbeef)
+
+        elif read_size == 4:
+            return struct.pack('<I', 0xdeadbeef)
+
+        elif read_size == 2:
+            return struct.pack('<H', 0xdead)
+
+        elif read_size == 1:
+            return struct.pack('<B', 0xde)
+        
+        return struct.pack('<Q', 0xdeadbeef)            
+
     def run_pop(self, pop_instr):
         stack_pointer_value = self.get_stack_pointer_value()
 
@@ -1851,7 +1872,7 @@ class x86Emulator:
             data = self.read_mem(stack_pointer_value, read_size)
 
             if data == None:
-                data = struct.pack('<I', INVALID_READ_DATA)
+                data = self.get_packed_invalid_read_data(read_size)
 
             if read_size == 2:
                 value = struct.unpack('<H', data)[0]
@@ -1886,7 +1907,7 @@ class x86Emulator:
             data = self.read_mem(stack_pointer_value, read_size)
 
             if data == None:
-                data = struct.pack('<I', INVALID_READ_DATA)
+                data = self.get_packed_invalid_read_data(read_size)
 
             if read_size == 2:
                 value = struct.unpack('<H', data)[0]
@@ -1959,6 +1980,8 @@ class x86Emulator:
             self.dereference_operand_store(add_instr.first_operand, new_value)
     
     def dereference_operand_store(self, operand, value):
+        value = ctypes.c_uint64(value).value
+
         original_operand = operand
         i = operand.find('[')
         j = operand.find(']')
@@ -1995,7 +2018,6 @@ class x86Emulator:
             elif default_register_size == 8:
                 value = value
                 self.write_mem(address, struct.pack('<Q', value))
-
 
     def dereference_operand_read(self, operand):
         original_operand = operand
@@ -2195,7 +2217,7 @@ class x86Emulator:
 
     def get_register_value(self, register_name):
         if register_name in ['rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rsp', 'rbp', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']:
-            return getattr(self, register_name)
+            return getattr(self, register_name) & 0xffffffffffffffff
 
         if register_name in ['eax', 'ebx', 'ecx', 'edx', 'esi', 'edi', 'esp', 'ebp', 'r8d', 'r9d', 'r10d', 'r11d', 'r12d', 'r13d', 'r14d', 'r15d']:
             return getattr(self, self.get_effective_register_name(register_name)) & 0xffffffff
@@ -2214,7 +2236,8 @@ class x86Emulator:
 
     def set_register_value(self, register_name, value):
         if register_name in ['rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rsp', 'rbp', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']:
-            return setattr(self, register_name, value)
+            new_value = value & 0xffffffffffffffff
+            return setattr(self, register_name, new_value)
 
         elif register_name in ['eax', 'ebx', 'ecx', 'edx', 'esi', 'edi', 'ebp', 'esp', 'r8d', 'r9d', 'r10d', 'r11d', 'r12d', 'r13d', 'r14d', 'r15d']:
             new_value = value & 0x00000000ffffffff
@@ -2254,7 +2277,7 @@ class x86Emulator:
             self.r13 = 0xc0c1c2c3c4c5c6c7
             self.r14 = 0xd0d1d2d3d4d5d6d7
             self.r15 = 0xe0e1e2e3e4e5e6e7
-            self.rbp = DEFAULT_STACK_PTR
+            self.rbp = self.DEFAULT_STACK_PTR
             self.rsp = self.rbp - 0x100
 
         else:
@@ -2264,5 +2287,5 @@ class x86Emulator:
             self.edx = 0x40414243
             self.esi = 0x50515253
             self.edi = 0x60616263
-            self.ebp = DEFAULT_STACK_PTR
+            self.ebp = self.DEFAULT_STACK_PTR
             self.esp = self.ebp - 0x100
