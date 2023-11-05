@@ -1749,6 +1749,16 @@ def populate_LoadConstAuxiliary():
                             copy_load_const_chain_2 = copy.deepcopy(load_const_chain_2)
                             copy_load_const_chain_2.gadgets[0].intentional_stack_movement_before_ret = True
 
+                            try:
+                                if adder_reg not in copy_load_const_chain_2.gadgets[0].tainted_regs:
+                                    copy_load_const_chain_2.gadgets[0].tainted_regs.append(adder_reg)
+
+                                if adder_reg not in copy_load_const_chain_2.tainted_regs:
+                                    copy_load_const_chain_2.tainted_regs.append(adder_reg)
+
+                            except Exception as e:
+                                print(e)
+
                             item.append(copy_load_const_chain_2)
 
                             # Gadget(address, instructions, state_transition_info, comments)
@@ -1783,6 +1793,17 @@ def populate_LoadConstAuxiliary():
 
                             copy_load_const_chain_2 = copy.deepcopy(load_const_chain_2)
                             copy_load_const_chain_2.gadgets[0].intentional_stack_movement_before_ret = True
+
+                            try:
+                                if subber_reg not in copy_load_const_chain_2.gadgets[0].tainted_regs:
+                                    copy_load_const_chain_2.gadgets[0].tainted_regs.append(subber_reg)
+
+                                if subber_reg not in copy_load_const_chain_2.tainted_regs:
+                                    copy_load_const_chain_2.tainted_regs.append(subber_reg)
+
+                            except Exception as e:
+                                print(e)
+
                             item.append(copy_load_const_chain_2)
 
                             # Gadget(address, instructions, state_transition_info, comments)
@@ -1816,9 +1837,41 @@ def discover_more_zeroreg():
     for key in ZeroReg_chains.keys():
         ZeroReg_chains[key] = sorted(ZeroReg_chains[key], key=lambda x: x.grade)
 
+
+def discover_more_moves_combined_gadgets():
+    global ZeroReg_chains
+    global AddReg_chains
+    global MoveReg_chains
+
+    for dst_reg in ZeroReg_chains.keys():
+        zero_chains = ZeroReg_chains[dst_reg]
+
+        if zero_chains:
+            zero_chain = zero_chains[0]
+
+            for src_reg in AddReg_chains.get(dst_reg, {}).keys():
+                if src_reg not in ALL_KNOWN_REGISTERS:
+                    continue
+
+                add_chains = AddReg_chains[dst_reg][src_reg]
+
+                if add_chains:
+                    zero_chain = copy.deepcopy(zero_chain)
+                    add_chain = copy.deepcopy(add_chains[0])
+
+                    if src_reg not in zero_chain.tainted_regs:
+                        joined_chain = join_chains([zero_chain, add_chain])
+
+                        add_to_MoveReg(src_reg, dst_reg, joined_chain)
+
+    for key1 in MoveReg_chains.keys():
+        for key2 in MoveReg_chains[key1].keys():
+            MoveReg_chains[key1][key2] = sorted(MoveReg_chains[key1][key2], key=lambda x: x.grade)
+
+
 # Use graph theory to find more moves
 # Example: if we have a chain for eax -> ebx and a chain for ebx -> ecx, so we have a chain for eax -> ecx
-def discover_more_moves():
+def graph_discover_more_moves():
     new_chains_count = 0
 
     sys.stdout.write('\r[+] Discovering new MoveReg chains... {0}'.format(new_chains_count))
@@ -2392,19 +2445,26 @@ def initialize_semantic_gadgets(gadgets):
     sys.stdout.write('\r\n')
     sys.stdout.flush()
 
-    # add_to_ZeroReg('eax', Chain([Gadget('0xfafafafa', ['mov eax, 0x1', 'ret'], 1, []), Gadget('0xfafafafb', ['inc eax', 'ret'], 1, []), Gadget('0xfafafafc', ['dec eax', 'ret'], 1, []), Gadget('0xfafafafc', ['dec eax', 'ret'], 1, [])]))
     sort_semantic_gadgets()
+    
+    populate_LoadConstAuxiliary()
 
-    discover_more_moves()
+    # only call this after loadconstauxiliary is complete
+    discover_more_zeroreg()
+
+    discover_more_moves_combined_gadgets()
+
+    # use graph to discover new paths
+    graph_discover_more_moves()
+
+    # call these two below only after ZeroReg is complete
     discover_more_memread(gadgets)
     discover_more_memstore(gadgets)
 
     # call this only after sorting semantic gadgets
-    populate_LoadConstAuxiliary()
     populate_GetStackPtr()
     populate_StackPivot()
     populate_BackupRestore()
-    discover_more_zeroreg()
 
 def input_swallowing_interrupt(_input):
     def _input_swallowing_interrupt(*args):
