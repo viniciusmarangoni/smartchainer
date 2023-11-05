@@ -1799,6 +1799,9 @@ def populate_LoadConstAuxiliary():
             LoadConstAuxiliary_chains[key1][key2] = sorted_list
 
 
+def discover_more_zeroreg():
+    pass
+
 # Use graph theory to find more moves
 # Example: if we have a chain for eax -> ebx and a chain for ebx -> ecx, so we have a chain for eax -> ecx
 def discover_more_moves():
@@ -2387,6 +2390,7 @@ def initialize_semantic_gadgets(gadgets):
     populate_GetStackPtr()
     populate_StackPivot()
     populate_BackupRestore()
+    discover_more_zeroreg()
 
 def input_swallowing_interrupt(_input):
     def _input_swallowing_interrupt(*args):
@@ -3329,7 +3333,7 @@ class RopShell(cmd.Cmd):
                             print("{0} += struct.pack('{1}', base+{2})".format(self.rop_chain_variable_name, pack_size, gadget.address))
 
                     for i in range(remaining_padding_because_retn // padding_size):
-                        print("{0} += struct.pack('{1}', {2})       # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of retn'))
+                        print("{0} += struct.pack('{1}', {2})       # {3}".format(self.rop_chain_variable_name, pack_size, hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of retn'))
 
                     remaining_padding_because_retn = gadget.stack_movement_after_ret
 
@@ -3340,7 +3344,7 @@ class RopShell(cmd.Cmd):
                     stack_movement_before_ret = gadget.stack_movement_before_ret
                     if stack_movement_before_ret > padding_size:
                         for i in range((stack_movement_before_ret - padding_size) // padding_size):
-                            print("{0} += struct.pack('{1}', {2})       # {3}".format(self.rop_chain_variable_name, pack_size, self.hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of stack movement'))
+                            print("{0} += struct.pack('{1}', {2})       # {3}".format(self.rop_chain_variable_name, pack_size, hex_converter(self.DUMMY_VALUE_FOR_ROP), 'PADDING because of stack movement'))
 
             # End highlight
             if index == highlight_item:
@@ -3378,10 +3382,10 @@ class RopShell(cmd.Cmd):
                     return
 
 
-            if self.constant_contains_badchar(value_integer):
-                print('\n[WARNING] The custom value {0} contains a BADCHAR!'.format(self.hex_converter(value_integer)))
+            if constant_contains_badchar(value_integer):
+                print('\n[WARNING] The custom value {0} contains a BADCHAR!'.format(hex_converter(value_integer)))
 
-            addr_hex = self.hex_converter(value_integer)
+            addr_hex = hex_converter(value_integer)
             gadget = GadgetsByAddr.get(addr_hex, None)
 
             gadget_type = 'constant'
@@ -3412,7 +3416,7 @@ class RopShell(cmd.Cmd):
 
             chain_list = []
             
-            chain_list.append(Chain([Gadget(self.hex_converter(value_integer), [], {}, comments=comments, gadget_type=gadget_type)]))
+            chain_list.append(Chain([Gadget(hex_converter(value_integer), [], {}, comments=comments, gadget_type=gadget_type)]))
 
             self.serve_chain_list(chain_list, list_name='CustomValue[{0}]'.format(in_args), register_to_preserve=None, max_to_show=1)
 
@@ -4296,116 +4300,6 @@ class RopShell(cmd.Cmd):
         print('\t              MoveReg eax ebx all\n')
         print('\tDescription:  Show gadget chains that make the value in <src-register> go to <dst-register>\n')
 
-    def constant_contains_badchar(self, const_value: int):
-        global BAD_CHARS
-
-        if GADGETS_ARCH_BITS == 64:
-            data = struct.pack('<Q', const_value)
-
-        else:
-            data = struct.pack('<I', const_value)
-        
-        for bad_char in BAD_CHARS:
-            if bad_char in data:
-                return True
-        
-        return False
-
-
-    def get_random_without_badchar(self):
-        global GADGETS_ARCH_BITS
-        global BAD_CHARS
-
-        available_bytes = bytearray()
-        for i in range(0, 0xff+1):
-            if i not in BAD_CHARS:
-                available_bytes += bytearray(i.to_bytes(1, 'big'))
-
-        if len(available_bytes) == 0:
-            raise Exception('All bytes are bad chars')
-
-        num_bytes = 4
-        if GADGETS_ARCH_BITS == 64:
-            num_bytes = 8
-
-        constant = bytearray()
-        for i in range(num_bytes):
-            constant += bytearray(random.choice(available_bytes).to_bytes(1, 'big'))
-
-        constant = bytes(constant)
-
-        if num_bytes == 4:
-            return struct.unpack('<I', constant)[0]
-
-        else:
-            return struct.unpack('<Q', constant)[0]
-
-    def derive_sub_without_badchars(self, const_value):
-        for i in range(100000):
-            if i != 0:
-                initial_value = self.get_random_without_badchar()
-
-            else:
-                initial_value = 0x70707070
-                
-                if GADGETS_ARCH_BITS == 64:
-                    initial_value = 0x7070707070707070
-
-                if self.constant_contains_badchar(initial_value):
-                    initial_value = self.get_random_without_badchar()
-
-            if initial_value == None:
-                return None, None
-
-            if GADGETS_ARCH_BITS == 64:
-                complement = ctypes.c_uint64(const_value + initial_value).value
-                sub_correct = ctypes.c_uint64(complement - initial_value).value == const_value
-
-            else:
-                complement = ctypes.c_uint32(const_value + initial_value).value
-                sub_correct = ctypes.c_uint32(complement - initial_value).value == const_value
-
-            if not self.constant_contains_badchar(complement) and sub_correct:
-                return complement, initial_value
-
-        return None, None
-
-    def derive_sum_without_badchars(self, const_value):
-        for i in range(100000):
-            if i != 0:
-                initial_value = self.get_random_without_badchar()
-
-            else:
-                initial_value = 0x70707070
-                
-                if GADGETS_ARCH_BITS == 64:
-                    initial_value = 0x7070707070707070
-
-                if self.constant_contains_badchar(initial_value):
-                    initial_value = self.get_random_without_badchar()
-
-            if initial_value == None:
-                return None, None
-
-            if GADGETS_ARCH_BITS == 64:
-                complement = ctypes.c_uint64(const_value - initial_value).value
-                sum_correct = ctypes.c_uint64(initial_value + complement).value == const_value
-
-            else:
-                complement = ctypes.c_uint32(const_value - initial_value).value
-                sum_correct = ctypes.c_uint32(initial_value + complement).value == const_value
-
-            if not self.constant_contains_badchar(complement) and sum_correct:
-                return initial_value, complement
-
-        return None, None
-
-    def hex_converter(self, value):
-        if GADGETS_ARCH_BITS == 64:
-            return '{0:#018x}'.format(value)
-
-        return '{0:#010x}'.format(value)
-
     def dump_best_LoadConst(self):
         print('\nBest LoadConst operations:')
         for info in self.stats['LoadConst']:
@@ -4483,11 +4377,11 @@ class RopShell(cmd.Cmd):
             print('Constant is too big')
             return
             
-        if self.constant_contains_badchar(constant_value):
+        if constant_contains_badchar(constant_value):
             # LoadConstAuxiliary_chains = {'register-to-modify': {'auxiliary-type': [Chain, Chain, Chain...]}}
             chain_list = []
-            sum_operator_1, sum_operator_2 = self.derive_sum_without_badchars(constant_value)
-            sub_operator_1, sub_operator_2 = self.derive_sub_without_badchars(constant_value)
+            sum_operator_1, sum_operator_2 = derive_sum_without_badchars(constant_value)
+            sub_operator_1, sub_operator_2 = derive_sub_without_badchars(constant_value)
 
             for auxiliary_type in LoadConstAuxiliary_chains.get(dest_reg, {}).keys():
                 tmp_list = copy.deepcopy(LoadConstAuxiliary_chains[dest_reg][auxiliary_type])
@@ -4501,12 +4395,12 @@ class RopShell(cmd.Cmd):
                                 continue
 
                             if GADGETS_ARCH_BITS == 64:
-                                negate_constant_value = self.hex_converter(ctypes.c_uint64(0 - constant_value).value)
+                                negate_constant_value = hex_converter(ctypes.c_uint64(0 - constant_value).value)
 
                             else:
-                                negate_constant_value = self.hex_converter(ctypes.c_uint32(0 - constant_value).value)
+                                negate_constant_value = hex_converter(ctypes.c_uint32(0 - constant_value).value)
 
-                            if not self.constant_contains_badchar(int(negate_constant_value, 16)):
+                            if not constant_contains_badchar(int(negate_constant_value, 16)):
                                 gadget.address = negate_constant_value
                                 gadget.comments = 'CONSTANT neg({0}) to avoid badchars'.format(constant_value_text)
                                 fixed_chain = True
@@ -4516,12 +4410,12 @@ class RopShell(cmd.Cmd):
                                 continue
 
                             if GADGETS_ARCH_BITS == 64:
-                                negate_constant_value = self.hex_converter(ctypes.c_uint64(~constant_value).value)
+                                negate_constant_value = hex_converter(ctypes.c_uint64(~constant_value).value)
 
                             else:
-                                negate_constant_value = self.hex_converter(ctypes.c_uint32(~constant_value).value)
+                                negate_constant_value = hex_converter(ctypes.c_uint32(~constant_value).value)
 
-                            if not self.constant_contains_badchar(int(negate_constant_value, 16)):
+                            if not constant_contains_badchar(int(negate_constant_value, 16)):
                                 gadget.address = negate_constant_value
                                 gadget.comments = 'CONSTANT not({0}) to avoid badchars'.format(constant_value_text)
                                 fixed_chain = True
@@ -4534,12 +4428,12 @@ class RopShell(cmd.Cmd):
                                 continue
 
                             if gadget.comments == 'CONSTANT1':
-                                gadget.address = self.hex_converter(sum_operator_1)
-                                gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(self.hex_converter(sum_operator_1), constant_value_text, self.hex_converter(sum_operator_2))
+                                gadget.address = hex_converter(sum_operator_1)
+                                gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(hex_converter(sum_operator_1), constant_value_text, hex_converter(sum_operator_2))
 
                             elif gadget.comments == 'CONSTANT2':
-                                gadget.address = self.hex_converter(sum_operator_2)
-                                gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(self.hex_converter(sum_operator_2), constant_value_text, self.hex_converter(sum_operator_1))
+                                gadget.address = hex_converter(sum_operator_2)
+                                gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(hex_converter(sum_operator_2), constant_value_text, hex_converter(sum_operator_1))
                                 fixed_chain = True
 
                         elif auxiliary_type == 'sub-after-load':
@@ -4550,12 +4444,12 @@ class RopShell(cmd.Cmd):
                                 continue
 
                             if gadget.comments == 'CONSTANT1':
-                                gadget.address = self.hex_converter(sub_operator_1)
-                                gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(self.hex_converter(sub_operator_1), constant_value_text, self.hex_converter(sub_operator_2))
+                                gadget.address = hex_converter(sub_operator_1)
+                                gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(hex_converter(sub_operator_1), constant_value_text, hex_converter(sub_operator_2))
 
                             elif gadget.comments == 'CONSTANT2':
-                                gadget.address = self.hex_converter(sub_operator_2)
-                                gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(self.hex_converter(sub_operator_2), constant_value_text, self.hex_converter(sub_operator_1))
+                                gadget.address = hex_converter(sub_operator_2)
+                                gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(hex_converter(sub_operator_2), constant_value_text, hex_converter(sub_operator_1))
                                 fixed_chain = True
 
                     if fixed_chain:
@@ -4570,7 +4464,7 @@ class RopShell(cmd.Cmd):
 
                 for gadget in chain.gadgets:
                     if gadget.comments == 'CONSTANT1':
-                        gadget.address = self.hex_converter(constant_value)
+                        gadget.address = hex_converter(constant_value)
                         gadget.comments = 'CONSTANT {0}'.format(constant_value_text)
                         fixed_chain = True
 
@@ -4730,7 +4624,7 @@ class RopShell(cmd.Cmd):
 
             result = emu.get_register_value(ax)
 
-            print('\nnot({0}) is {1} in hex'.format(number_str, self.hex_converter(result)))
+            print('\nnot({0}) is {1} in hex'.format(number_str, hex_converter(result)))
             print('not({0}) is {1} in decimal\n'.format(number_str, result))
             return
 
@@ -4750,7 +4644,7 @@ class RopShell(cmd.Cmd):
 
             result = emu.get_register_value(ax)
 
-            print('\nneg({0}) is {1} in hex'.format(number_str, self.hex_converter(result)))
+            print('\nneg({0}) is {1} in hex'.format(number_str, hex_converter(result)))
             print('neg({0}) is {1} in decimal\n'.format(number_str, result))
             return
 
@@ -4799,6 +4693,113 @@ class RopShell(cmd.Cmd):
 
     def cleanup(self):
         print('Cleaning up')
+
+
+def derive_sub_without_badchars(const_value):
+        for i in range(100000):
+            if i != 0:
+                initial_value = get_random_without_badchar()
+
+            else:
+                initial_value = 0x70707070
+                
+                if GADGETS_ARCH_BITS == 64:
+                    initial_value = 0x7070707070707070
+
+                if constant_contains_badchar(initial_value):
+                    initial_value = get_random_without_badchar()
+
+            if initial_value == None:
+                return None, None
+
+            if GADGETS_ARCH_BITS == 64:
+                complement = ctypes.c_uint64(const_value + initial_value).value
+                sub_correct = ctypes.c_uint64(complement - initial_value).value == const_value
+
+            else:
+                complement = ctypes.c_uint32(const_value + initial_value).value
+                sub_correct = ctypes.c_uint32(complement - initial_value).value == const_value
+
+            if not constant_contains_badchar(complement) and sub_correct:
+                return complement, initial_value
+
+        return None, None
+
+
+def derive_sum_without_badchars(const_value):
+        for i in range(100000):
+            if i != 0:
+                initial_value = get_random_without_badchar()
+
+            else:
+                initial_value = 0x70707070
+                
+                if GADGETS_ARCH_BITS == 64:
+                    initial_value = 0x7070707070707070
+
+                if constant_contains_badchar(initial_value):
+                    initial_value = get_random_without_badchar()
+
+            if initial_value == None:
+                return None, None
+
+            if GADGETS_ARCH_BITS == 64:
+                complement = ctypes.c_uint64(const_value - initial_value).value
+                sum_correct = ctypes.c_uint64(initial_value + complement).value == const_value
+
+            else:
+                complement = ctypes.c_uint32(const_value - initial_value).value
+                sum_correct = ctypes.c_uint32(initial_value + complement).value == const_value
+
+            if not constant_contains_badchar(complement) and sum_correct:
+                return initial_value, complement
+
+        return None, None
+
+
+def get_random_without_badchar():
+        global GADGETS_ARCH_BITS
+        global BAD_CHARS
+
+        available_bytes = bytearray()
+        for i in range(0, 0xff+1):
+            if i not in BAD_CHARS:
+                available_bytes += bytearray(i.to_bytes(1, 'big'))
+
+        if len(available_bytes) == 0:
+            raise Exception('All bytes are bad chars')
+
+        num_bytes = 4
+        if GADGETS_ARCH_BITS == 64:
+            num_bytes = 8
+
+        constant = bytearray()
+        for i in range(num_bytes):
+            constant += bytearray(random.choice(available_bytes).to_bytes(1, 'big'))
+
+        constant = bytes(constant)
+
+        if num_bytes == 4:
+            return struct.unpack('<I', constant)[0]
+
+        else:
+            return struct.unpack('<Q', constant)[0]
+
+
+def constant_contains_badchar(const_value: int):
+    global BAD_CHARS
+
+    if GADGETS_ARCH_BITS == 64:
+        data = struct.pack('<Q', const_value)
+
+    else:
+        data = struct.pack('<I', const_value)
+    
+    for bad_char in BAD_CHARS:
+        if bad_char in data:
+            return True
+    
+    return False
 
 
 def hex_converter(value):
