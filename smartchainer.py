@@ -2361,8 +2361,6 @@ def initialize_semantic_gadgets(gadgets):
 
     num_gadgets = len(gadgets)
 
-    slowest_time = 0
-    slowest_gadget = None
     for i, gadget in enumerate(gadgets):
         sys.stdout.write('\r[+] Analyzing gadgets... {0:03}%'.format(int(((i+1) / num_gadgets) * 100)))
         sys.stdout.flush()
