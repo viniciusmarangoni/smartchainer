@@ -4377,100 +4377,7 @@ class RopShell(cmd.Cmd):
             print('Constant is too big')
             return
             
-        if constant_contains_badchar(constant_value):
-            # LoadConstAuxiliary_chains = {'register-to-modify': {'auxiliary-type': [Chain, Chain, Chain...]}}
-            chain_list = []
-            sum_operator_1, sum_operator_2 = derive_sum_without_badchars(constant_value)
-            sub_operator_1, sub_operator_2 = derive_sub_without_badchars(constant_value)
-
-            for auxiliary_type in LoadConstAuxiliary_chains.get(dest_reg, {}).keys():
-                tmp_list = copy.deepcopy(LoadConstAuxiliary_chains[dest_reg][auxiliary_type])
-
-                for chain in tmp_list:
-                    fixed_chain = False
-
-                    for gadget in chain.gadgets:
-                        if auxiliary_type == 'neg-after-load':
-                            if gadget.gadget_type != 'constant':
-                                continue
-
-                            if GADGETS_ARCH_BITS == 64:
-                                negate_constant_value = hex_converter(ctypes.c_uint64(0 - constant_value).value)
-
-                            else:
-                                negate_constant_value = hex_converter(ctypes.c_uint32(0 - constant_value).value)
-
-                            if not constant_contains_badchar(int(negate_constant_value, 16)):
-                                gadget.address = negate_constant_value
-                                gadget.comments = 'CONSTANT neg({0}) to avoid badchars'.format(constant_value_text)
-                                fixed_chain = True
-
-                        elif auxiliary_type == 'not-after-load':
-                            if gadget.gadget_type != 'constant':
-                                continue
-
-                            if GADGETS_ARCH_BITS == 64:
-                                negate_constant_value = hex_converter(ctypes.c_uint64(~constant_value).value)
-
-                            else:
-                                negate_constant_value = hex_converter(ctypes.c_uint32(~constant_value).value)
-
-                            if not constant_contains_badchar(int(negate_constant_value, 16)):
-                                gadget.address = negate_constant_value
-                                gadget.comments = 'CONSTANT not({0}) to avoid badchars'.format(constant_value_text)
-                                fixed_chain = True
-
-                        elif auxiliary_type == 'add-after-load':
-                            if None in [sum_operator_1, sum_operator_2]:
-                                continue
-
-                            if gadget.gadget_type != 'constant':
-                                continue
-
-                            if gadget.comments == 'CONSTANT1':
-                                gadget.address = hex_converter(sum_operator_1)
-                                gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(hex_converter(sum_operator_1), constant_value_text, hex_converter(sum_operator_2))
-
-                            elif gadget.comments == 'CONSTANT2':
-                                gadget.address = hex_converter(sum_operator_2)
-                                gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(hex_converter(sum_operator_2), constant_value_text, hex_converter(sum_operator_1))
-                                fixed_chain = True
-
-                        elif auxiliary_type == 'sub-after-load':
-                            if None in [sub_operator_1, sub_operator_2]:
-                                continue
-
-                            if gadget.gadget_type != 'constant':
-                                continue
-
-                            if gadget.comments == 'CONSTANT1':
-                                gadget.address = hex_converter(sub_operator_1)
-                                gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(hex_converter(sub_operator_1), constant_value_text, hex_converter(sub_operator_2))
-
-                            elif gadget.comments == 'CONSTANT2':
-                                gadget.address = hex_converter(sub_operator_2)
-                                gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(hex_converter(sub_operator_2), constant_value_text, hex_converter(sub_operator_1))
-                                fixed_chain = True
-
-                    if fixed_chain:
-                        chain_list.append(chain)
-
-        else:
-            chain_list = []
-            tmp_list = copy.deepcopy(LoadConstAuxiliary_chains.get(dest_reg, {}).get('just-load', []))
-
-            for chain in tmp_list:
-                fixed_chain = False
-
-                for gadget in chain.gadgets:
-                    if gadget.comments == 'CONSTANT1':
-                        gadget.address = hex_converter(constant_value)
-                        gadget.comments = 'CONSTANT {0}'.format(constant_value_text)
-                        fixed_chain = True
-
-                chain_list.append(chain)
-
-        chain_list = sorted(chain_list, key=lambda x: x.grade)
+        chain_list = build_loadconst_chains(constant_value, constant_value_text, dest_reg)
 
         if not chain_list:
             print('\nNo chains found for "LoadConst {0} {1}"\n'.format(dest_reg, constant_value_text))
@@ -4693,6 +4600,107 @@ class RopShell(cmd.Cmd):
 
     def cleanup(self):
         print('Cleaning up')
+
+
+def build_loadconst_chains(constant_value, constant_value_text, dest_reg):
+    global LoadConstAuxiliary_chains
+
+    chain_list = []
+    if constant_contains_badchar(constant_value):
+        # LoadConstAuxiliary_chains = {'register-to-modify': {'auxiliary-type': [Chain, Chain, Chain...]}}
+        sum_operator_1, sum_operator_2 = derive_sum_without_badchars(constant_value)
+        sub_operator_1, sub_operator_2 = derive_sub_without_badchars(constant_value)
+
+        for auxiliary_type in LoadConstAuxiliary_chains.get(dest_reg, {}).keys():
+            tmp_list = copy.deepcopy(LoadConstAuxiliary_chains[dest_reg][auxiliary_type])
+
+            for chain in tmp_list:
+                fixed_chain = False
+
+                for gadget in chain.gadgets:
+                    if auxiliary_type == 'neg-after-load':
+                        if gadget.gadget_type != 'constant':
+                            continue
+
+                        if GADGETS_ARCH_BITS == 64:
+                            negate_constant_value = hex_converter(ctypes.c_uint64(0 - constant_value).value)
+
+                        else:
+                            negate_constant_value = hex_converter(ctypes.c_uint32(0 - constant_value).value)
+
+                        if not constant_contains_badchar(int(negate_constant_value, 16)):
+                            gadget.address = negate_constant_value
+                            gadget.comments = 'CONSTANT neg({0}) to avoid badchars'.format(constant_value_text)
+                            fixed_chain = True
+
+                    elif auxiliary_type == 'not-after-load':
+                        if gadget.gadget_type != 'constant':
+                            continue
+
+                        if GADGETS_ARCH_BITS == 64:
+                            negate_constant_value = hex_converter(ctypes.c_uint64(~constant_value).value)
+
+                        else:
+                            negate_constant_value = hex_converter(ctypes.c_uint32(~constant_value).value)
+
+                        if not constant_contains_badchar(int(negate_constant_value, 16)):
+                            gadget.address = negate_constant_value
+                            gadget.comments = 'CONSTANT not({0}) to avoid badchars'.format(constant_value_text)
+                            fixed_chain = True
+
+                    elif auxiliary_type == 'add-after-load':
+                        if None in [sum_operator_1, sum_operator_2]:
+                            continue
+
+                        if gadget.gadget_type != 'constant':
+                            continue
+
+                        if gadget.comments == 'CONSTANT1':
+                            gadget.address = hex_converter(sum_operator_1)
+                            gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(hex_converter(sum_operator_1), constant_value_text, hex_converter(sum_operator_2))
+
+                        elif gadget.comments == 'CONSTANT2':
+                            gadget.address = hex_converter(sum_operator_2)
+                            gadget.comments = 'CONSTANT {0} ({1} - {2})'.format(hex_converter(sum_operator_2), constant_value_text, hex_converter(sum_operator_1))
+                            fixed_chain = True
+
+                    elif auxiliary_type == 'sub-after-load':
+                        if None in [sub_operator_1, sub_operator_2]:
+                            continue
+
+                        if gadget.gadget_type != 'constant':
+                            continue
+
+                        if gadget.comments == 'CONSTANT1':
+                            gadget.address = hex_converter(sub_operator_1)
+                            gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(hex_converter(sub_operator_1), constant_value_text, hex_converter(sub_operator_2))
+
+                        elif gadget.comments == 'CONSTANT2':
+                            gadget.address = hex_converter(sub_operator_2)
+                            gadget.comments = 'CONSTANT {0} ({1} + {2})'.format(hex_converter(sub_operator_2), constant_value_text, hex_converter(sub_operator_1))
+                            fixed_chain = True
+
+                if fixed_chain:
+                    chain_list.append(chain)
+
+    else:
+        tmp_list = copy.deepcopy(LoadConstAuxiliary_chains.get(dest_reg, {}).get('just-load', []))
+
+        for chain in tmp_list:
+            fixed_chain = False
+
+            for gadget in chain.gadgets:
+                if gadget.comments == 'CONSTANT1':
+                    gadget.address = hex_converter(constant_value)
+                    gadget.comments = 'CONSTANT {0}'.format(constant_value_text)
+                    fixed_chain = True
+
+            if fixed_chain:
+                chain_list.append(chain)
+
+    chain_list = sorted(chain_list, key=lambda x: x.grade)
+
+    return chain_list
 
 
 def derive_sub_without_badchars(const_value):
