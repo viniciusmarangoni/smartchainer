@@ -1800,7 +1800,21 @@ def populate_LoadConstAuxiliary():
 
 
 def discover_more_zeroreg():
-    pass
+    global ZeroReg_chains
+    regs = KNOWN_REGISTERS_32
+
+    if GADGETS_ARCH_BITS == 64:
+        regs = KNOWN_REGISTERS_64
+
+    for reg in regs:
+        chains = build_loadconst_chains(0x0, '0', reg)
+
+        if chains:
+            for chain in chains:
+                add_to_ZeroReg(reg, chain)
+
+    for key in ZeroReg_chains.keys():
+        ZeroReg_chains[key] = sorted(ZeroReg_chains[key], key=lambda x: x.grade)
 
 # Use graph theory to find more moves
 # Example: if we have a chain for eax -> ebx and a chain for ebx -> ecx, so we have a chain for eax -> ecx
