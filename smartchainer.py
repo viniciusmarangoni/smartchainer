@@ -214,29 +214,42 @@ def filter_gadgets_from_rpplusplus(lines, base_addr=0):
             detected_architecture = lines[i][index:].strip()
 
             if detected_architecture in ['x86', 'x64']:
-                different_arch = False
+                if GADGETS_ARCH_BITS == None:
+                    if detected_architecture == 'x86':
+                        GADGETS_ARCH_BITS = 32
 
-                if detected_architecture == 'x86' and GADGETS_ARCH_BITS == 64:
-                    different_arch = True
+                    elif detected_architecture == 'x64':
+                        GADGETS_ARCH_BITS = 64
 
-                elif detected_architecture == 'x64' and GADGETS_ARCH_BITS == 32:
-                    different_arch = True
+                else:
+                    different_arch = False
 
-                if different_arch:
-                    print('[!] The specified gadgets file seems to contain instructions for {0} architecture'.format(detected_architecture))
-                    answer = input('[?] Set the architecture to {0}? [Y/n]: '.format(detected_architecture))
+                    if detected_architecture == 'x86' and GADGETS_ARCH_BITS == 64:
+                        different_arch = True
 
-                    if answer.upper() in ['Y', '']:
-                        if detected_architecture == 'x86':
-                            GADGETS_ARCH_BITS = 32
+                    elif detected_architecture == 'x64' and GADGETS_ARCH_BITS == 32:
+                        different_arch = True
 
-                        elif detected_architecture == 'x64':
-                            GADGETS_ARCH_BITS = 64
+                    if different_arch:
+                        print('[!] The specified gadgets file seems to contain instructions for {0} architecture'.format(detected_architecture))
+                        answer = input('[?] Set the architecture to {0}? [Y/n]: '.format(detected_architecture))
 
-                        log_info('[+] Architecture set to {0}'.format(detected_architecture))
+                        if answer.upper() in ['Y', '']:
+                            if detected_architecture == 'x86':
+                                GADGETS_ARCH_BITS = 32
+
+                            elif detected_architecture == 'x64':
+                                GADGETS_ARCH_BITS = 64
+
+                            log_info('[+] Architecture set to {0}'.format(detected_architecture))
 
         i += 1
 
+    if GADGETS_ARCH_BITS == None:
+        print('[!] Unable to automatically identify gadgets bitness. Will set it to 32!')
+        GADGETS_ARCH_BITS = 32
+
+    print('[+] Gadgets bitness set to {0}'.format(GADGETS_ARCH_BITS))
     i += 1
     if i >= list_length:
         return None
@@ -1752,9 +1765,11 @@ def populate_LoadConstAuxiliary():
                             try:
                                 if adder_reg not in copy_load_const_chain_2.gadgets[0].tainted_regs:
                                     copy_load_const_chain_2.gadgets[0].tainted_regs.append(adder_reg)
+                                    copy_load_const_chain_2.gadgets[0].grade += PENALTY_FOR_TAINTED_REG
 
                                 if adder_reg not in copy_load_const_chain_2.tainted_regs:
                                     copy_load_const_chain_2.tainted_regs.append(adder_reg)
+                                    copy_load_const_chain_2.grade += PENALTY_FOR_TAINTED_REG
 
                             except Exception as e:
                                 print(e)
@@ -1797,9 +1812,11 @@ def populate_LoadConstAuxiliary():
                             try:
                                 if subber_reg not in copy_load_const_chain_2.gadgets[0].tainted_regs:
                                     copy_load_const_chain_2.gadgets[0].tainted_regs.append(subber_reg)
+                                    copy_load_const_chain_2.gadgets[0].grade += PENALTY_FOR_TAINTED_REG
 
                                 if subber_reg not in copy_load_const_chain_2.tainted_regs:
                                     copy_load_const_chain_2.tainted_regs.append(subber_reg)
+                                    copy_load_const_chain_2.grade += PENALTY_FOR_TAINTED_REG
 
                             except Exception as e:
                                 print(e)
@@ -4969,7 +4986,7 @@ def main():
                                                "Examples: --base-address='0x1000' for positive offsets or --base-address='-0x1000' "\
                                                "for negative offsets", type=str, default='0x0')
 
-    parser.add_argument('--arch', help='Specify the processor architecture of gadgets', choices=['x86', 'x64'], default='x86')
+    parser.add_argument('--arch', help='Specify the processor architecture of gadgets', choices=['x86', 'x64'])
     parser.add_argument('--auto-backup-restore', help='Enable auto backup/restore of preserver registers', action='store_true')
 
     parser.add_argument('--no-color', help='Disable colored output', action='store_true')
@@ -4984,6 +5001,9 @@ def main():
 
     elif args.arch == 'x64':
         GADGETS_ARCH_BITS = 64
+
+    else:
+        GADGETS_ARCH_BITS = None
 
     log_info('[+] Architecture: {0}'.format(args.arch))
 
